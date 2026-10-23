@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>会议日报生成器</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="head">
+      <h1>会议日报生成器</h1>
+      <p class="sub">粘贴会议文本，或上传 <code>.txt</code> / <code>.md</code> 文件，一键生成结构化日报。</p>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head">
+        <label for="textInput" class="label">会议原始文本</label>
+        <span id="charCount" class="char-count">0 字符</span>
+      </div>
+
+      <textarea
+        id="textInput"
+        class="textarea"
+        placeholder="把会议录音转写稿或笔记粘贴到这里……"
+        spellcheck="false"
+      ></textarea>
+
+      <div class="toolbar">
+        <label class="file-btn" for="fileInput">上传 .txt / .md</label>
+        <input id="fileInput" type="file" accept=".txt,.md" hidden />
+
+        <button id="generateBtn" class="btn-primary" disabled>生成日报</button>
+        <button id="clearBtn" class="btn-ghost" type="button">清空</button>
+      </div>
+
+      <p id="hint" class="hint" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="resultPanel" class="panel result" hidden>
+      <div class="panel-head">
+        <span class="label">会议日报</span>
+        <button id="copyBtn" class="btn-ghost" type="button">一键复制</button>
+      </div>
+      <article id="resultBody" class="result-body markdown"></article>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
