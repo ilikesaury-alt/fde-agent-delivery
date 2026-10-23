@@ -1,6 +1,7 @@
 # 会议日报生成器 — 交付文档
 
-> 对应 revision：未提交（工作区 diff 状态，见 `worker/`、`frontend/`、`CONTEXT.md`）
+> 对应 revision：未提交（工作区 diff，见 `product1/`、`CONTEXT.md`）
+> 技术栈：Void 1.2.1（Vite 8）+ React 19 + Hono 路由 + magpie 中转
 > 面向：测试同学与业务方。看这份即可开始测试，无需开发者口头补充。
 > 关联：需求与验收标准见 [CONTEXT.md](../../../CONTEXT.md)
 
@@ -19,66 +20,73 @@
 
 - **面向谁**：个人 / 职场人自用（会后复盘、纪要整理）。
 - **形态**：网页工具。粘贴文本或上传 `.txt` / `.md` → 一键生成 → 一键复制。
-- **本版本不包含**：音频/视频语音转写（ASR）、`.docx` / `.pdf` 解析、超长文本自动分段摘要、账号体系与历史记录、数据持久化。这些能力在代码中预留了接口，未启用。
+- **本版本不包含**：音频/视频语音转写（ASR）、`.docx` / `.pdf` 解析、超长文本自动分段摘要、账号体系与历史记录、数据持久化。
 
 ## 2. 使用说明
 
 ### 入口
-- 本地开发：`http://127.0.0.1:8787`（`node scripts/dev.mjs` 或 `npx wrangler dev`）
-- 部署后：Cloudflare 分配的域名（Worker 与前端同源时无需额外配置）
+- 本地开发：`cd product1 && npm run dev` → 浏览器打开终端打印的地址（默认 `http://localhost:5173`）
+- 部署后：`void deploy --backend cloudflare` 输出的域名
 
-> **前端如何找到后端**：`frontend/app.js` 按顺序解析——① `window.__MEETING_DIGEST_API__`（部署时注入，如 `<script>window.__MEETING_DIGEST_API__="https://your-worker.workers.dev"</script>`）→ ② 同源相对路径（http/https 页面）→ ③ 本地兜底 `http://127.0.0.1:8787`。若前后端不同域且未注入①，页面会请求失败并提示「无法连接 AI 服务」。
+> **同源说明**：Void 把前端与 `/api/*` 放在同一个 Worker 上，**不存在跨域问题**，无需配置 API 地址。
 
 ### 操作步骤
-1. 在文本框中粘贴会议文本；或点击「上传 .txt / .md」选择文件（文件内容自动读入文本框，仅在浏览器本地读取，不上传原文件以外的数据）。
+1. 在文本框中粘贴会议文本；或点击「上传 .txt / .md」选择文件（内容在浏览器本地读取，不上传原文件）。
 2. 点击「生成日报」。等待数秒，结果区展示 Markdown 日报。
-3. 点击「一键复制」把日报 Markdown 复制到剪贴板（粘贴到飞书/Notion/邮件等支持 Markdown 的地方即可排版）。
+3. 点击「一键复制」把日报 Markdown 复制到剪贴板。
 
 ### 字段说明
 | 界面元素 | 含义 |
 |----------|------|
 | 字符计数 | 当前文本长度；超过 30000 字符变红并禁止生成 |
-| 生成日报按钮 | 无内容时禁用；生成中显示「生成中…」 |
-| 结果区 | 展示生成的 Markdown 日报 |
+| 生成日报按钮 | 无内容或超长时禁用；生成中显示「生成中…」 |
+| 结果区 | 展示生成的 Markdown 日报（纯文本渲染，不解析 Markdown） |
 | 一键复制 | 复制 Markdown 原文，成功时按钮变「已复制 ✓」 |
 
 ## 3. 权限 / 配置变更
 
-本产品**无账号、无权限、不落库**。需要配置的是模型服务凭据（仅后端，管理员在 Cloudflare Dashboard 操作）：
+本产品**无账号、无权限、不落库**。需要配置的是模型服务凭据（仅服务端）：
 
 | 变量 | 说明 | 是否敏感 |
 |------|------|----------|
 | `MAGPIE_BASE_URL` | magpie 中转的 OpenAI 兼容端点，如 `https://xxx/v1` | 否 |
 | `MAGPIE_MODEL` | 模型名，如 `deepseek-chat` / `gpt-4o-mini` | 否 |
-| `MAGPIE_API_KEY` | 中转服务密钥 | **是，务必用 `wrangler secret put MAGPIE_API_KEY` 或 Dashboard 加密变量，不要写进仓库** |
-| `MAX_INPUT_CHARS` | 长文本阈值，默认 `30000` | 否 |
-| `ALLOWED_ORIGIN` | 可选。把 CORS 收紧到单一来源（如 Pages 域名）；留空则允许任意来源 | 否 |
+| `MAGPIE_API_KEY` | 中转服务密钥 | **是，本地放 `.env`（已 gitignore）；生产用 `void secret put MAGPIE_API_KEY`** |
 
-配置位置：Cloudflare Dashboard → Workers → meeting-digest-worker → Settings → Variables and Secrets。
+配置方式：
+- **本地**：`product1/.env`（参考 `.env.example`）
+- **生产**：`void secret put MAGPIE_API_KEY`（Void CLI 管理）
+
+> 阈值 `MAX_INPUT_CHARS` 是代码常量（`lib/prompt.ts`），**不是**环境变量——改阈值需改代码并跑测试。
 
 ## 4. 测试指引
 
 ### 环境与前置
-- Node.js ≥ 22（本地开发）
-- **必须**先配好 `MAGPIE_*` 三项，否则所有生成用例都会返回「AI 服务暂不可用」（这是预期行为，见用例 T07）
+- Node.js **24.21.0+**（Void 要求）
+- **必须**先配好 `MAGPIE_*`，否则所有生成用例都会返回「AI 服务暂不可用」（这是预期行为，见 T07）
+- 启动：`cd product1 && npm run dev`
 
 ### 用例清单（编号与 CONTEXT.md 验收标准对应）
 
-| 编号 | 操作 | 预期结果 | 对应验收标准 |
-|------|------|----------|--------------|
-| T01 | 粘贴一段含明确结论/待办的会议文本 → 生成 | 返回包含全部 6 个板块的 Markdown；内容忠于原文 | 标准 1 |
-| T02 | 上传 `test.txt`（内容同 T01）→ 生成 | 结果与 T01 一致；上传后文本框显示文件内容 | 标准 2 |
-| T03 | 上传 `a.docx` 或 `a.pdf` | 前端拒绝，提示「不支持的文件格式…」；不发起请求 | 标准 3 |
-| T04 | 不输入任何内容，看「生成日报」按钮 | 按钮禁用；无法提交 | 标准 4 |
-| T05 | 粘贴超过 30000 字符文本 → 生成 | 返回友好错误「内容过长（上限 30000 字符…）请分段提交」；页面不卡死 | 标准 5 |
-| T06 | 生成成功后点「一键复制」 | 剪贴板得到 Markdown 原文；按钮变「已复制 ✓」 | 标准 6 |
-| T07 | 不配置 `MAGPIE_API_KEY` 直接生成 | 返回「AI 服务暂不可用：未配置模型服务凭据…」；无 500 堆栈、无密钥泄露 | 标准 7 |
-| T08 | 检查前端页面源码 | 无任何 API Key / 密钥硬编码 | 标准 8 |
-| T09 | 输入几乎无信息的文本（如「嗯嗯啊啊测试」） | 仍按 6 板块输出，各板块如实说明「原文未提供相关信息」，不编造 | 边界规则 |
+| 编号 | 操作 | 预期结果 | 对应验收标准 | 证据状态 |
+|------|------|----------|--------------|----------|
+| T01 | 粘贴一段含明确结论/待办的会议文本 → 生成 | 返回包含全部 6 个板块的 Markdown；内容忠于原文 | 标准 1 | ✅ 已有真实输出 `docs/e2e-evidence/T01-digest-output.json` |
+| T02 | 上传 `meeting-sample.txt`（`docs/e2e-evidence/`）→ 生成 | 结果与 T01 一致；上传后文本框显示文件内容 | 标准 2 | ⏳ 待跑 |
+| T03 | 上传 `a.docx` 或 `a.pdf` | 前端拒绝，提示「不支持的文件格式…」；不发起请求 | 标准 3 | ✅ 自动化 |
+| T04 | 不输入任何内容，看「生成日报」按钮 | 按钮禁用；无法提交 | 标准 4 | ✅ 自动化 |
+| T05 | 粘贴超过 30000 字符文本 → 生成 | 返回友好错误「内容过长…请分段提交」；页面不卡死 | 标准 5 | ✅ 自动化 |
+| T06 | 生成成功后点「一键复制」 | 剪贴板得到 Markdown 原文；按钮变「已复制 ✓」 | 标准 6 | ⏳ 待跑 |
+| T07 | 不配置 `MAGPIE_API_KEY` 直接生成 | 返回「AI 服务暂不可用：未配置模型服务凭据…」；无 500 堆栈 | 标准 7 | ✅ 自动化 |
+| T08 | 检查前端打包产物 | 无任何 API Key 硬编码 | 标准 8 | ✅ 人工审查 |
+| T09 | 输入几乎无信息的文本（`T09-input.json`：「嗯嗯啊啊测试」） | 仍按 6 板块输出，各板块如实说明「原文未提供相关信息」 | 边界规则 | ⏳ 待跑 |
 
 ### 自动化覆盖 vs 人工
-- **已自动化**（`worker/test/run.ts`，17 项）：prompt 含全部板块与防臆造约束、空/空白输入校验、超长阈值、文件格式校验（含伪装后缀）、未配置凭据报错、上游 5xx/非 JSON/空 content 收敛为友好错误、Authorization 头与 base 尾斜杠归一化、正常路径 trim。运行：`cd worker && node --experimental-strip-types test/run.ts`
-- **需人工**：T02 真实文件上传、T06 剪贴板、T07 真实未配置场景、T09 真实 LLM 输出质量。
+- **已自动化**（`product1/test/run.ts`，**29 项**）：prompt 板块完整性、防臆造约束、空/空白输入、超长阈值、
+  文件格式（含伪装后缀）、二进制检测、未配置凭据、上游 5xx/非 JSON/空 content 收敛、
+  Authorization 头与 base 归一化、路由层状态码映射（400/413/502/503）、结构不完整重试一次。
+  运行：`cd product1 && node --experimental-strip-types test/run.ts`
+- **需人工**：T02 真实文件上传、T06 剪贴板、T09 真实 LLM 输出质量。
+
 
 ### 错误行为约定（供测试参考）
 | 场景 | HTTP | 返回 |
@@ -94,17 +102,19 @@
 
 ## 5. 已知问题与注意事项
 
-1. **结果区为纯文本渲染**：`pre-wrap` 展示 Markdown 原文，不渲染加粗/表格样式（刻意从简，复制后由目标工具排版）。后续可加轻量 Markdown 渲染。
-2. **无重试机制**：LLM 超时 60 秒后报错，需用户手动重试。
-3. **日报质量依赖模型**：`deepseek-chat` 与 `gpt-4o-mini` 效果有差异；温度固定 0.3 偏保守，利于忠于原文但可能偏平淡。
-4. **长文本直接拒绝而非分段**：MVP 策略，超 30000 字符即拒（`chunk.ts` 已预留分块接口）。
-5. **CORS 默认放开**：未配 `ALLOWED_ORIGIN` 时任意站点可调用 API。个人工具且无凭证/Cookie，风险有限；上线建议配 `ALLOWED_ORIGIN`。
-6. **防刷未做**：无速率限制，依赖 Cloudflare 免费额度；被滥用时会消耗额度。
-7. **空输入返回 413**：HTTP 语义上 413 指「载荷过大」，此处复用同一状态码保持前后端一致（低危，后续可改 400）。
+1. **结果区为纯文本渲染**：`pre-wrap` 展示 Markdown 原文，不渲染加粗/表格样式（刻意从简，复制后由目标工具排版）。**渲染必须用带净化的渲染器，禁止 innerHTML 直插**。
+2. **无自动重试（用户侧）**：LLM 超时 25 秒后报错，需用户手动重试。结构不完整时服务端会自动重试一次。
+3. **日报质量依赖模型**：`deepseek-chat` 与 `gpt-4o-mini` 效果有差异；温度固定 0.3 偏保守。
+4. **长文本直接拒绝而非分段**：MVP 策略，超 30000 字符即拒。
+5. **同源部署无 CORS 问题**：Void 把前端与 API 放同一 Worker，因此不再需要 `ALLOWED_ORIGIN` 配置（`env.ts` 仍保留该变量以备跨域场景）。
+6. **防刷未做**：无速率限制，依赖 Cloudflare 免费额度；被滥用时会消耗 magpie 配额。
+7. **`vite dev` 在受限沙箱不可用**：`@cloudflare/vite-plugin` 需 spawn `workerd`。构建与部署不受影响。
 
 ## 6. 部署与回滚要点
 
-- **部署**：`cd worker && pnpm deploy`（wrangler 部署 Worker + 静态资源）；或 Cloudflare Dashboard 绑定 GitHub 仓库自动部署。
-- **凭据**：部署前在 Dashboard 配好 `MAGPIE_*`；`MAGPIE_API_KEY` 用 secret。
-- **回滚**：Workers 支持版本回滚（Dashboard → Deployments → Rollback）；无数据库，无数据迁移风险。
-- **成本**：Cloudflare 免费额度（10 万次请求/天）覆盖个人使用；模型调用成本取决于 magpie 中转计费。
+- **部署**：`cd product1 && void deploy --backend cloudflare --provision`
+  （Void 自动构建、开通并绑定所需资源、执行迁移、发布）
+- **凭据**：`void secret put MAGPIE_API_KEY`；非敏感项可放 `void.config` 或平台 env
+- **回滚**：`void project rollback [deployId]`；无数据库，无迁移风险
+- **日志**：`void project logs` / `void project requests`
+- **成本**：Cloudflare 免费额度覆盖个人使用；模型调用成本取决于 magpie 中转计费

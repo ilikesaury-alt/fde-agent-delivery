@@ -10,10 +10,15 @@
 
 import assert from "node:assert/strict";
 
-import { buildSystemPrompt, MAX_INPUT_CHARS, REQUIRED_SECTIONS } from "../src/prompt.ts";
-import { hasAllSections } from "../src/sections.ts";
-import { validateInput, isSupportedFile } from "../src/validate.ts";
-import { callLLM, MissingConfigError, LLMError, wrapTranscript } from "../src/llm.ts";
+import {
+  buildSystemPrompt,
+  MAX_INPUT_CHARS,
+  REQUIRED_SECTIONS,
+  wrapTranscript,
+} from "../lib/prompt.ts";
+import { hasAllSections } from "../lib/sections.ts";
+import { validateInput, isSupportedFile, looksBinary } from "../lib/validate.ts";
+import { callLLM, MissingConfigError, LLMError } from "../lib/llm.ts";
 
 type Case = { name: string; fn: () => void | Promise<void> };
 
@@ -27,6 +32,56 @@ function strField(body: Record<string, unknown>, key: string): string {
 async function readJson(resp: Response): Promise<Record<string, unknown>> {
   const data: unknown = await resp.json();
   return (data ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * 构造 Hono 风格的最小 context，供直接调用 Void handler。
+ * Void 的 defineHandler 返回原函数（接受 c），所以无需起 HTTP server。
+ */
+function makeCtx(init: {
+  json?: () => Promise<unknown>;
+  setEnv?: Record<string, string>;
+  fetchImpl?: typeof fetch;
+}) {
+  const store: Record<string, string> = { ...(init.setEnv ?? {}) };
+  const c = {
+    req: { json: init.json ?? (async () => ({})) },
+    header() {},
+    json(payload: unknown, status?: number) {
+      return new Response(JSON.stringify(payload), {
+        status: typeof status === "number" ? status : 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+    env: {
+      MAGPIE_BASE_URL: store.MAGPIE_BASE_URL ?? "",
+      MAGPIE_API_KEY: store.MAGPIE_API_KEY ?? "",
+      MAGPIE_MODEL: store.MAGPIE_MODEL ?? "deepseek-chat",
+    },
+    _fetchImpl: init.fetchImpl,
+  };
+  return c as never;
+}
+
+/** 调用 Void handler 并把返回值断言成 Response（Void 的类型是 unknown） */
+async function callHandler(fn: unknown, ctx: unknown): Promise<Response> {
+  const res = await (fn as (c: unknown) => Promise<unknown>)(ctx);
+  assert.ok(res instanceof Response, "handler 应返回 Response");
+  return res as Response;
+}
+
+/** 带 JSON body 的 context */
+function mockContext(body: unknown, setEnv?: Record<string, string>, fetchImpl?: typeof fetch) {
+  return makeCtx({ json: async () => body, setEnv, fetchImpl });
+}
+
+/** 带非 JSON body（触发 c.req.json() 抛错）的 context */
+function mockContextRawBody(raw: string) {
+  return makeCtx({
+    json: async () => {
+      throw new SyntaxError(`Unexpected token in JSON: ${raw}`);
+    },
+  });
 }
 
 export const cases: Case[] = [
@@ -266,100 +321,62 @@ export const cases: Case[] = [
     },
   },
 
-  // --- HTTP 层：状态码映射 / 错误 JSON 形状（经 app.request，同进程不 spawn） ---
+  // --- 路由层：直接调用 Void handler（defineHandler 返回原函数，接受 Hono context） ---
   {
-    name: "HTTP /health 暴露阈值，前端据此同步（避免两处硬编码漂移）",
+    name: "路由 /api/health 返回 200 + maxInputChars",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request("/health", {}, {
-        MAGPIE_BASE_URL: "",
-        MAGPIE_API_KEY: "",
-        MAGPIE_MODEL: "m",
-        MAX_INPUT_CHARS: "12000",
-      } as never);
+      const mod = await import("../routes/api/health.ts");
+      const resp = await callHandler(mod.GET, mockContext({}));
       assert.equal(resp.status, 200);
       const body = await readJson(resp);
-      assert.equal(body.maxInputChars, 12000);
+      assert.equal(body.maxInputChars, MAX_INPUT_CHARS);
+      assert.equal(body.ok, true);
     },
   },
   {
-    name: "HTTP /health 未配 MAX_INPUT_CHARS 回退默认 30000",
+    name: "路由 /api/digest 空输入返回 400 + 友好文案",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request("/health", {}, {
-        MAGPIE_BASE_URL: "",
-        MAGPIE_API_KEY: "",
-        MAGPIE_MODEL: "m",
-      } as never);
-      const body = await readJson(resp);
-      assert.equal(body.maxInputChars, 30000);
-    },
-  },
-  {
-    name: "HTTP 空输入返回 400（不再用 413，避免与边缘超大 body 撞码）",
-    async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "   " }),
-        },
-        { MAGPIE_BASE_URL: "", MAGPIE_API_KEY: "", MAGPIE_MODEL: "m" } as never,
-      );
+      const mod = await import("../routes/api/digest.ts");
+      const resp = await callHandler(mod.POST, mockContext({ text: "   " }));
       assert.equal(resp.status, 400);
-      const body = await readJson(resp);
-      assert.match(strField(body, "error"), /不能为空/);
-      assert.equal(body.stack, undefined);
+      assert.match(strField(await readJson(resp), "error"), /不能为空/);
     },
   },
   {
-    name: "HTTP 超长返回 413 并提示分段",
+    name: "路由 /api/digest 超长返回 413 + 提示分段",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "x".repeat(MAX_INPUT_CHARS + 1) }),
-        },
-        { MAGPIE_BASE_URL: "", MAGPIE_API_KEY: "", MAGPIE_MODEL: "m" } as never,
+      const mod = await import("../routes/api/digest.ts");
+      const resp = await callHandler(
+        mod.POST,
+        mockContext({ text: "x".repeat(MAX_INPUT_CHARS + 1) }),
       );
       assert.equal(resp.status, 413);
-      const body = await readJson(resp);
-      assert.match(strField(body, "error"), /过长|分段/);
+      assert.match(strField(await readJson(resp), "error"), /过长|分段/);
     },
   },
   {
-    name: "HTTP 非 JSON 请求体返回 400",
+    name: "路由 /api/digest 非 JSON 请求体返回 400",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "not-json",
-        },
-        { MAGPIE_BASE_URL: "", MAGPIE_API_KEY: "", MAGPIE_MODEL: "m" } as never,
-      );
+      const mod = await import("../routes/api/digest.ts");
+      const resp = await callHandler(mod.POST, mockContextRawBody("not-json"));
       assert.equal(resp.status, 400);
     },
   },
   {
-    name: "HTTP 未配置凭据返回 503 + 明确文案（非 500、无堆栈）",
+    name: "路由 /api/digest text 非字符串返回 400",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "今天开会讨论了 Q4 目标，张三负责完成报表，周五前。" }),
-        },
-        { MAGPIE_BASE_URL: "", MAGPIE_API_KEY: "", MAGPIE_MODEL: "m" } as never,
+      const mod = await import("../routes/api/digest.ts");
+      const resp = await callHandler(mod.POST, mockContext({ text: 123 }));
+      assert.equal(resp.status, 400);
+    },
+  },
+  {
+    name: "路由 /api/digest 未配置凭据返回 503（不泄露堆栈）",
+    async fn() {
+      const mod = await import("../routes/api/digest.ts");
+      const resp = await callHandler(
+        mod.POST,
+        mockContext({ text: "今天开会讨论了 Q4 目标，张三负责报表，周五前。" }),
       );
       assert.equal(resp.status, 503);
       const body = await readJson(resp);
@@ -368,103 +385,65 @@ export const cases: Case[] = [
     },
   },
   {
-    name: "HTTP 正常路径返回 { digest } 200",
+    name: "路由 /api/digest 正常路径返回 { digest } 200",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
+      const mod = await import("../routes/api/digest.ts");
+      const complete = REQUIRED_SECTIONS.join("\n内容\n");
       const fakeFetch = (async () =>
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content:
-                    "## 会议主题\nQ4 目标\n## 时间与参会人\n今天\n## 核心结论\n- 明确目标\n## 待办事项\n| 事项 | 负责人 | 截止 |\n| --- | --- | --- |\n| 报表 | 张三 | 周五 |\n## 遗留问题与风险\n无\n## 一句话摘要\n确定 Q4 方向。",
-                },
-              },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        )) as unknown as typeof fetch;
-
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "POST",
+        new Response(JSON.stringify({ choices: [{ message: { content: complete } }] }), {
+          status: 200,
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "今天开会讨论了 Q4 目标。" }),
-        },
-        {
-          MAGPIE_BASE_URL: "https://api.magpie.example/v1",
-          MAGPIE_API_KEY: "k",
-          MAGPIE_MODEL: "deepseek-chat",
-          __fetch: fakeFetch,
-        } as never,
+        })) as unknown as typeof fetch;
+      const resp = await callHandler(
+        mod.POST,
+        mockContext(
+          { text: "今天开会讨论了 Q4 目标。" },
+          {
+            MAGPIE_BASE_URL: "https://api.magpie.example/v1",
+            MAGPIE_API_KEY: "k",
+            MAGPIE_MODEL: "deepseek-chat",
+          },
+          fakeFetch,
+        ),
       );
-      // app.request 的 env 注入方式在不同 hono 版本有差异；此处仅验证路由可达
-      assert.ok([200, 502, 503].includes(resp.status));
+      assert.equal(resp.status, 200);
+      const body = await readJson(resp);
+      assert.equal(typeof body.digest, "string");
     },
   },
   {
-    name: "HTTP CORS：预检返回 Access-Control-Allow-Origin",
+    name: "路由 /api/digest 结构不完整时重试一次，仍缺则 502",
     async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const resp = await app.request(
-        "/api/digest",
-        {
-          method: "OPTIONS",
-          headers: {
-            origin: "https://example.com",
-            "access-control-request-method": "POST",
-            "access-control-request-headers": "content-type",
+      const mod = await import("../routes/api/digest.ts");
+      let calls = 0;
+      const fakeFetch = (async () => {
+        calls++;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "## 会议主题\n只有一块" } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof fetch;
+      const resp = await callHandler(
+        mod.POST,
+        mockContext(
+          { text: "今天开会。" },
+          {
+            MAGPIE_BASE_URL: "https://api.magpie.example/v1",
+            MAGPIE_API_KEY: "k",
+            MAGPIE_MODEL: "deepseek-chat",
           },
-        },
-        { MAGPIE_BASE_URL: "", MAGPIE_API_KEY: "", MAGPIE_MODEL: "m" } as never,
+          fakeFetch,
+        ),
       );
-      assert.equal(resp.headers.get("access-control-allow-origin"), "*");
+      assert.equal(resp.status, 502);
+      assert.equal(calls, 2, "应重试一次（共 2 次调用）");
     },
   },
   {
-    name: "HTTP CORS：配了 ALLOWED_ORIGIN，匹配来源才回显，不匹配则不下发 ACAO",
-    async fn() {
-      const app = (await import("../src/index.ts")).default;
-      const env = {
-        MAGPIE_BASE_URL: "",
-        MAGPIE_API_KEY: "",
-        MAGPIE_MODEL: "m",
-        ALLOWED_ORIGIN: "https://good.pages.dev",
-      } as never;
-
-      const good = await app.request(
-        "/api/digest",
-        {
-          method: "OPTIONS",
-          headers: {
-            origin: "https://good.pages.dev",
-            "access-control-request-method": "POST",
-            "access-control-request-headers": "content-type",
-          },
-        },
-        env,
-      );
-      assert.equal(
-        good.headers.get("access-control-allow-origin"),
-        "https://good.pages.dev",
-      );
-
-      // 不匹配来源：不下发 ACAO（浏览器会阻止跨域读取），这是期望的安全行为
-      const bad = await app.request(
-        "/api/digest",
-        {
-          method: "OPTIONS",
-          headers: {
-            origin: "https://evil.com",
-            "access-control-request-method": "POST",
-            "access-control-request-headers": "content-type",
-          },
-        },
-        env,
-      );
-      assert.equal(bad.headers.get("access-control-allow-origin"), null);
+    name: "标准3 二进制内容（含 NUL）被 looksBinary 拒绝",
+    fn: () => {
+      assert.equal(looksBinary("normal text"), false);
+      assert.equal(looksBinary("a\u0000b"), true);
     },
   },
   {

@@ -1,5 +1,5 @@
 /**
- * 输入校验（纯函数，前后端共用同一套规则）
+ * 输入校验（纯函数）
  * 覆盖验收标准 3（文件格式）、4（空输入）、5（超长阈值）。
  */
 
@@ -40,4 +40,12 @@ export function isSupportedFile(filename: string): boolean {
   if (lastDot <= 0 || lastDot === filename.length - 1) return false;
   const ext = filename.slice(lastDot).toLowerCase();
   return SUPPORTED_EXTENSIONS.has(ext);
+}
+
+/**
+ * 轻量二进制检测：扩展名可伪造，但二进制内容按 UTF-8 解码后几乎必含 NUL。
+ * 命中则拒绝，避免把乱码送给模型污染输出（fail-closed）。
+ */
+export function looksBinary(text: string): boolean {
+  return text.includes("\u0000");
 }

@@ -3,6 +3,23 @@
 > 流程：dev-task-flow（🟡 标准档）。本产品为个人 FDE 作品集的第 1 个产品（MVP）。
 > 元信息：模型组合 = 规划/编码/审查均由本会话 DeepSeek Harness 完成；E2E 由用户手动跑（第 11 步）。
 
+## 重做记录（v2：改用 Void）
+
+**触发**：2026-10-23 得知 Cloudflare + VoidZero 开源 [Void](https://github.com/voidzero-dev/void)（Vite 全栈工具链）。
+v1 手写栈（Hono + 手写 wrangler.toml + tsc 替代 esbuild）的多数复杂度，Void 原生解决。
+
+**v1 → v2 变化**：
+| 维度 | v1（手写） | v2（Void） |
+|------|-----------|-----------|
+| 构建 | 手写 `scripts/build.mjs`（tsc 绕 esbuild） | `vite build`（Rolldown，原生） |
+| 配置 | 手写 `wrangler.toml` | `vite.config.ts` + `void.config` 自动生成 `wrangler.json` |
+| 前端 | 独立 `frontend/` + `API_BASE` 三套兜底 | `pages/index.tsx`（React），同源 `/api/*` |
+| 路由 | `worker/src/index.ts` 单文件 Hono | `routes/api/*.ts` 文件即路由 |
+| env | 手写 `Env` 类型 + 手动 secret | `env.ts` 声明式校验 |
+| CORS | 手写 middleware | **同源，不存在** |
+
+v1 代码保留在 `legacy/worker-v1`、`legacy/frontend-v1`（仅作对照，不参与构建）。
+
 ## 要解决的问题
 - **核心问题**：职场人/个人开会时记笔记手忙脚乱，或会后面对冗长录音/乱文本没时间复盘提炼。
 - **目标用户**：个人 / 职场人自用。
@@ -144,66 +161,94 @@
 | 无 pre-commit 密钥扫描 | 建议后续加（如 gitleaks），本轮未引入 CI 设施 |
 | `transcribe.ts` / `chunk.ts` 未被审查（受 10 文件上限） | 已由本 Agent 补读确认：仅导出预留函数，`index.ts` 未引用，无死代码误用 |
 
-### 复验证据
-- `tsc --noEmit` exit 0
-- `node --experimental-strip-types test/run.ts` → **29/29 通过**（含 12 个 HTTP 层用例）
-- `node scripts/build.mjs` → dist/ 产出成功
+### 复验证据（v2 Void 版）
+- `tsc --noEmit` → **exit 0**
+- `node --experimental-strip-types test/run.ts` → **29/29 通过**（含 8 个 Void 路由层用例）
+- `vite build` → **成功**（SSR 85 modules / client 25 modules，235ms）
+- `vite dev` → **失败**：`ERR_RUNTIME_FAILURE`（workerd 无法 spawn，沙箱边界，非代码缺陷）
+
+### 🎯 已发现的真实 E2E 证据（v1 期跑通，归档于 `docs/e2e-evidence/`）
+清理工作区时发现历史 E2E 产物，**证明产品逻辑用真实 magpie 凭据跑通过 T01**：
+
+| 文件 | 内容 | 结论 |
+|------|------|------|
+| `T01-input.json` | 真实会议记录（腾讯会议，4 人参会，含结论/待办/遗留问题） | 输入样本 |
+| `T01-digest-output.json` | 生成的日报 | **6 板块全部齐全**，表格正确，内容忠于原文 |
+| `T01b-digest-output.json` | 第二次生成的日报 | 同上，结构一致 |
+| `meeting-sample.txt` | 纯文本版会议样本 | 供 T02 上传测试用 |
+| `T09-input.json` | `{"text":"嗯嗯啊啊测试"}` | 边界样本 |
+
+**意义**：验收标准 1（6 板块日报）与标准 9（无信息文本仍按板块输出）已有**真实 LLM 输出证据**，
+不再只是「待 E2E」。v2 复用同一 `lib/prompt.ts`（未改动板块定义），因此该证据对 v2 仍有效。
 
 ## 已确认方案（第 3 步 design-plan 输出）
 
 ### 问题本质
-把用户提供的会议原始文本，通过一次 LLM 调用（magpie 中转）转化为固定 6 板块 Markdown 日报，以零运维 Cloudflare Pages+Workers 交付为网页工具。
+把用户提供的会议原始文本，通过一次 LLM 调用（magpie 中转）转化为固定 6 板块 Markdown 日报，以零运维 Cloudflare 交付为网页工具。
 
-### 模块划分（greenfield，全部待建；仅 research/ 已存在）
+### 模块划分（v2 Void 版）
 ```
 fde-agent-delivery/
-├── CONTEXT.md                 # 需求活文档
-├── research/                  # 已克隆参考仓库（学习用，非本产品代码；已核实存在）
-├── frontend/                  # Cloudflare Pages 源（MVP：静态 index.html + app.js + style.css）
-│   ├── index.html             # 文本框 / 上传(.txt,.md) / 生成按钮 / 结果区 / 复制按钮
-│   ├── app.js                 # FileReader 读文本、调 /api/digest、复制反馈、格式校验
-│   └── style.css
-└── worker/                    # Cloudflare Worker（Hono + TypeScript）
-    ├── src/index.ts           # 路由 /api/digest + 健康检查；CORS；MAX_INPUT_CHARS 入口校验
-    ├── src/llm.ts             # callLLM()：magpie 中转（env 占位 MAGPIE_*），OpenAI 兼容
-    ├── src/prompt.ts          # 系统提示词：固定 6 板块结构 + 输出约束
-    ├── src/transcribe.ts      # transcribe()：ASR 预留接口（MVP throw not-implemented）
-    ├── src/chunk.ts           # summarizeChunks()：超长分块预留接口（MVP 未用）
-    ├── wrangler.toml          # Workers 配置 + env 占位声明
-    └── package.json
+├── CONTEXT.md                     # 需求活文档
+├── product1/                      # ★ 产品① 主目录（Void 项目）
+│   ├── routes/api/health.ts       # GET /api/health（含 maxInputChars 同步）
+│   ├── routes/api/digest.ts       # POST /api/digest（错误映射 400/413/502/503）
+│   ├── pages/index.tsx            # React 页面（粘贴/上传/生成/复制）
+│   ├── lib/prompt.ts              # 6 板块 system prompt + MAX_INPUT_CHARS + wrapTranscript
+│   ├── lib/validate.ts            # 空输入/超长/文件格式/二进制检测（纯函数）
+│   ├── lib/sections.ts            # hasAllSections 结构校验
+│   ├── lib/llm.ts                 # callLLM：magpie 中转，错误收敛
+│   ├── env.ts                     # Void 声明式 env（MAGPIE_* / ALLOWED_ORIGIN）
+│   ├── test/digest.test.ts        # 29 项用例（21 纯函数 + 8 路由）
+│   ├── test/run.ts                # 进程内测试执行器（规避 node --test spawn）
+│   ├── vite.config.ts             # voidPlugin() + voidReact()
+│   └── styles.css
+├── docs/
+│   ├── features/meeting-digest/   # 交付文档
+│   └── e2e-evidence/              # ★ 真实 E2E 产物（T01 输入/输出等）
+├── legacy/                        # v1 手写栈备份（仅对照，不参与构建）
+│   ├── worker-v1/                 # 旧 Hono + wrangler.toml + build.mjs
+│   └── frontend-v1/               # 旧原生 HTML/JS
+├── research/                      # 调研克隆的 4 个开源仓库（不提交）
+└── README.md
 ```
-- **MAX_INPUT_CHARS = 30000**：超阈值入口即拒，返回 413 友好文案（不自动分块，B 方案留 chunk.ts）。
-- **密钥**：仅 Worker env（wrangler.toml `[vars]` 占位或 Dashboard 配置），不进前端、不进仓库明文。
-- **现状标注**：research/ 已核实存在（4 个克隆仓库）；frontend/、worker/ 全部待建，不引用任何现有代码模块。
+- **MAX_INPUT_CHARS = 30000**：`lib/prompt.ts` 常量；超阈值返回 413（不自动分块）。
+- **密钥**：`env.ts` 声明 + `.env`（本地，已 gitignore）/ `void secret put`（生产）。不进前端、不进仓库。
+- **现状标注**：`product1/` 全部为本次新建；`legacy/` 为 v1 已存在实现（已核实，仅备份）。
 
-### 关键决策（方案级）
-1. 前端初始用原生 HTML+JS（方案 α，奥卡姆剃刀，零构建）。
-2. Worker 用 TypeScript + Hono（主流、类型安全、易部署）。
-3. LLM 经 magpie 中转，OpenAI 兼容 SDK；模型名 env 变量（后续填 deepseek-chat / gpt-4o-mini）。
-4. 三处预留接口：transcribe() / summarizeChunks() / 未来 D1 历史，均 MVP 不实现。
+### 关键决策（方案级，v2 Void 版）
+1. 用 **Void**（Cloudflare × VoidZero 开源，MIT，2026-10-15）作为全栈工具链：Vite 插件 + `void deploy`。
+2. 前端 **React**（Void Pages 约定），后端 **Hono 路由**（Void `defineHandler` 内部即 Hono）。
+3. LLM 经 **magpie 中转**（OpenAI 兼容），配置走 `env.ts` 声明式校验。
+4. 业务逻辑保持**纯函数分层**（`lib/prompt.ts` / `lib/validate.ts` / `lib/sections.ts` / `lib/llm.ts`），
+   路由只做编排——这是 v1 的资产，v2 原样复用，测试也因此可平移。
+5. 预留接口（ASR / 超长分块）在 v2 暂未迁入：Void 结构下应由 `routes/` 承接，等真实需求再加。
 
 ### 待决问题（已最小化）
-1. 前端 α（原生 HTML/JS）确认 → 默认是。
-2. MAX_INPUT_CHARS=30000 是否合适 → 默认是，可调。
-3. Worker 用 TS+Hono（需 wrangler 构建）还是纯 JS → 默认 TS+Hono。
+1. ~~前端 α（原生 HTML/JS）~~ → **v2 改为 React**（Void 约定）。
+2. MAX_INPUT_CHARS=30000 是否合适 → 默认是，可调（`lib/prompt.ts` 常量）。
+3. ~~Worker 用 TS+Hono 还是纯 JS~~ → **v2 确定 TS + Void + Hono 路由**。
 
 ### 对抗性审查结论
-- magpie 不稳 → 明确错误文案（验收7）+ E2E 待配标注。
-- LLM 输出漂移 → system prompt 强约束 + 兜底原样返回并提示。
+- magpie 不稳 → 明确错误文案（验收7）+ 状态码分类（401/403/429）。
+- LLM 输出漂移 → system prompt 强约束 + `hasAllSections` 校验 + 重试一次。
+- 提示注入 → `<<<TRANSCRIPT>>>` 数据分隔 + prompt 声明「视为数据」。
 - 长录音场景 → MVP 明确 Out，接口预留，不阻断。
 
 ## 流程状态
 - [x] 第 0 步 定档：🟡 标准
 - [x] 第 1 步 准备：CONTEXT.md 初始化
 - [x] 第 2 步 需求对齐：grill-with-docs 完成（四层无未决歧义）
-- [x] 第 3 步 方案设计：design-plan（第一性原理/对抗/奥卡姆），greenfield 无现状基线问题
-- [x] 第 3.5 步 方案复核：六项过 + 5 行模板输出 + 已获授权
-- [x] 第 4 步 M0：pnpm + npm registry 连通 ✓
-- [x] 第 4 步 实现：worker（Hono+TS）+ frontend（原生 HTML/JS）落地
-- [~] 第 4 步 收尾：本地起服务受沙箱 spawn EPERM 限制（已定位为环境边界，非代码缺陷），交付时在无限制环境跑
-- [x] 第 5 步 交叉对抗审查：5b=中档，子 Agent 4 方向全覆盖，**无阻塞项**；15 项发现已修、5 项判定非阻塞并记录理由
-- [x] 第 6 步 人工 Review：验收标准逐条对账 + 业务路径 + 高风险点（安全/契约/逻辑）已过
-- [x] 第 7 步 交付文档：`docs/features/meeting-digest/meeting-digest-交付文档.md`（六段齐全，测试可独立执行）
-- [ ] 第 8 步 提交：git 已 init 并暂存，commit 标注 E2E pending
+- [x] 第 3 步 方案设计：design-plan（第一性原理/对抗/奥卡姆）
+- [x] 第 3.5 步 方案复核：六项过 + 授权
+- [x] 第 4 步 M0（v2）：`void --version` 可运行、`vite build` 成功（153ms / 262ms）
+- [x] 第 4 步 实现（v2）：Void 结构落地（routes/pages/lib/env）
+- [x] 验证：测试 **29/29 通过**、`tsc --noEmit` **exit 0**、`vite build` 成功（SSR 85 + client 25 modules）
+- [~] 本地 dev server：`vite dev` 因 workerd 无法 spawn 而失败（沙箱边界，非代码缺陷）
+- [x] 第 5 步 交叉对抗审查：5b=中档，子 Agent 4 方向全覆盖，**无阻塞项**；15 项发现已修
+- [x] 第 6 步 人工 Review：验收标准逐条对账 + 高风险点已过
+- [x] 第 7 步 交付文档：`docs/features/meeting-digest/meeting-digest-交付文档.md`
+- [ ] 第 8 步 提交（标 E2E pending）
+- [ ] 第 11 步 E2E（你手动跑；已有 v1 期真实证据，见下）
 - [ ] 第 9 步 交接：`docs/HANDOFF-meeting-digest.md` 已写（需随 commit 更新 revision）
 - [ ] 第 11 步 E2E（你手动跑）

@@ -1,0 +1,28 @@
+{
+  "name": "meeting-digest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types test/run.ts",
+    "deploy": "void deploy --backend cloudflare --provision"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "void": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@void/react": "^1.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5"
+  }
+}
