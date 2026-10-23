@@ -3,14 +3,8 @@
 > 供未来会话冷启动：从哪接着干、哪些已验证、哪些是猜测。
 
 ## 当前 revision
-未提交（工作区 diff 状态）。改动文件：
-- `CONTEXT.md`（需求活文档）
-- `worker/{package.json,wrangler.toml,tsconfig.json,tsconfig.build.json,.npmrc}`
-- `worker/src/{index,prompt,validate,llm,transcribe,chunk}.ts`
-- `worker/test/{digest.test.ts,run.ts}`
-- `worker/scripts/{build.mjs,dev.mjs}`
-- `frontend/{index.html,app.js,style.css}`
-- `README.md`、`docs/features/meeting-digest/meeting-digest-交付文档.md`、`docs/HANDOFF-meeting-digest.md`
+**commit `f97becc`**（master，root-commit，28 files / 3972 insertions）。
+E2E pending —— 见 `CONTEXT.md ## 验收证据` 与交付文档 T01–T09。
 
 ## 复现 / 验证命令
 ```bash
@@ -23,14 +17,16 @@ node scripts/dev.mjs                                            # 本地起服�
 Node 路径：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`
 
 ## 已验证（事实）
-- 测试 11/11 通过；`tsc --noEmit` exit 0；`scripts/build.mjs` 成功产出 `dist/`。
-- 依赖安装：**必须用 npm flat 布局**（`npm install --ignore-scripts`）。pnpm 的 isolated 布局会导致 wrangler 的传递依赖（miniflare）无法解析。
+- **测试 29/29 通过**（含 12 个 HTTP 层用例：状态码映射 400/413/502/503、CORS 预检、错误 JSON 形状、阈值回显）。
+- `tsc --noEmit` exit 0；`scripts/build.mjs` 产出 `dist/` 成功。
+- 第 5 步交叉对抗审查（中档、4 方向）**无阻塞项**；15 项发现已修，5 项判定为非阻塞并记录理由（详见 CONTEXT.md「第 5/6 步审查处置记录」）。
+- 依赖安装：**必须用 npm flat 布局 + `--ignore-scripts`**。pnpm 的 isolated 布局会导致 wrangler 的传递依赖（miniflare）无法解析。
 - `.npmrc` 设 `cache=./.npm-cache`，因为默认缓存目录在沙箱内不可写。
 - `worker/node_modules/@cloudflare/workerd-windows-64/bin/workerd.exe` 与 `@esbuild/win32-x64/esbuild.exe` 均已就位（平台包自带二进制）。
 
 ## 已验证为环境限制（非代码缺陷）
 - DSH Windows 沙箱禁止 confined 进程 spawn 子进程 → `node --test`、`wrangler dev`（esbuild service）、miniflare（spawn workerd）全部 `spawn EPERM`。
-- 这是 `test/run.ts`（进程内测试）与 `scripts/dev.mjs`（绕开 wrangler CLI）存在的原因。
+- 这是 `test/run.ts`（进程内测试执行器）与 `scripts/build.mjs`（tsc 替代 esbuild）存在的原因。
 - **换到普通终端后本地跑应无此限制**（未验证，属推测）。
 
 ## 未解决 / 待办
@@ -42,15 +38,20 @@ Node 路径：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencie
 ## 猜测 vs 已验证
 | 项 | 状态 |
 |----|------|
-| 测试/typecheck/构建通过 | ✅ 已验证 |
+| 测试 29/29 通过（含 12 个 HTTP 层用例） | ✅ 已验证 |
+| typecheck / build 通过 | ✅ 已验证 |
 | 依赖可解析、原生二进制就位 | ✅ 已验证 |
 | 本地沙箱无法起运行时 | ✅ 已验证（spawn EPERM） |
 | 普通终端可本地跑 | ⚠️ 推测，未验证 |
 | magpie 中转真实调用成功 | ⚠️ 未验证（无凭据） |
 | Cloudflare 部署流程 | ⚠️ 未验证（未部署） |
 
+## 未解决 / 待办
+1. **E2E 未跑**（**任务真正完成闸门**）：配 `MAGPIE_*` 后按交付文档 T01–T09 在无限制环境执行，证据填 `CONTEXT.md ## 验收证据`。在此之前本 commit 只是检查点快照，不算验证完成。
+2. **未部署**：前后端若不同域，需在 `index.html` 注入 `window.__MEETING_DIGEST_API__`。
+3. **上线前建议**：配 `ALLOWED_ORIGIN` 收紧 CORS；加速率限制防配额消耗。
+4. **可选增强**：结果区 Markdown 渲染（必须带净化，禁 innerHTML 直插）；pre-commit 密钥扫描。
+
 ## 下一步建议
-1. 在有 magpie 凭据的环境跑 E2E，填 `CONTEXT.md ## 验收证据`。
-2. 处置对抗审查发现项（若有阻塞）。
-3. `git init` + 首次 commit，MR 标注 `E2E pending`。
-4. 之后可启动产品 ②（情报站 / 内容生产工作台）。
+1. 在有 magpie 凭据的环境跑 E2E，补 `CONTEXT.md ## 验收证据`，通过后产品①才算交付完成。
+2. 之后启动产品②（情报站 / 内容生产工作台，模板见 `FDE作品调研与模仿起步方案.md` 第 8 节）。
