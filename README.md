@@ -23,7 +23,7 @@
 | 工具链 | **Void 1.2.1**（Vite 8 + Rolldown） | Vite 插件 + CLI，MIT 开源 |
 | 前端 | React 19（Void Pages） | `pages/index.tsx`，SSR + 客户端水合 |
 | 后端 | Hono 路由（Void `defineHandler`） | `routes/api/*.ts`，文件即路由 |
-| LLM | magpie 中转（OpenAI 兼容） | 模型可切 `deepseek-chat` / `gpt-4o-mini` |
+| LLM | magpie 中转（OpenAI 兼容） | 模型可切 `auto/hy3` / `auto/deepseek-v4.1-flash` |
 | 测试 | Node 原生执行器（进程内） | 规避沙箱对 `node --test` 的 spawn 限制 |
 
 ## 目录结构
@@ -62,7 +62,7 @@ npm run dev                      # vite dev（需无沙箱限制的环境）
 # 本地：创建 product1/.env（已被 gitignore）
 MAGPIE_BASE_URL=https://your-magpie-endpoint/v1
 MAGPIE_API_KEY=your-key
-MAGPIE_MODEL=deepseek-chat
+MAGPIE_MODEL=auto/hy3
 
 # 生产：void secret put MAGPIE_API_KEY
 ```

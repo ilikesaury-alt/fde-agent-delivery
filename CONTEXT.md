@@ -275,22 +275,59 @@ fde-agent-delivery/
 - [x] 第 7 步 交付文档：`docs/features/meeting-digest/meeting-digest-交付文档.md`
 - [x] 第 8 步 提交：commit `4d674ee`（标 E2E pending）
 - [x] 第 9 步 交接：`docs/HANDOFF-meeting-digest.md`
-- [x] **第 11 步 部署上线**：`https://meeting-digest.ilikesaury.workers.dev`（2026-10-23）
-- [~] **E2E 剩余**：T01/T02/T06 真实 LLM 路径待真实 magpie 凭据（当前线上为占位凭据）
+- [x] **第 11 步 部署上线 + 真实 E2E**：`https://meeting-digest.ilikesaury.workers.dev`（2026-10-23）
+- [x] **第 10 步 复盘与 Skill 沉淀**（2026-10-23）
+
+## 第 10 步复盘记录（capture-experience）
+
+### 一、重复流程识别（本次会话）
+
+| 重复操作 | 次数 | 是否沉淀 |
+|----------|------|----------|
+| `wrangler deploy` 并处理 secrets | 6+ | ✅ 已写入 Skill 硬约束 |
+| 环境自检（spawn / node --test 是否可用） | 4+ | ✅ 已写入 Skill 第 0 步 |
+| PowerShell 5.1 读 4xx/5xx body 得到空 | 3 | ✅ 已写入排查小抄 |
+| 隧道诊断（403 Host → 401 key） | 3 | ⬜ 一次性问题，不沉淀 |
+
+### 二、Skill 维护（做减法）
+
+**更新 `E:\Obsidian\lic-notebook\skills\cf-worker-local-env\SKILL.md`**：
+
+| 过时约束 | 处理 |
+|----------|------|
+| 「`node --test` 不可用」 | **删除**。实测 `danger-full-access` 下可用（fail 0） |
+| 「spawn EPERM 是必然」 | **改为条件式**：新增「第 0 步环境自检」，先跑再决定 |
+| 「wrangler dev 起不来」 | **更新根因**：新增 `CreateDirectory: #5 拒绝访问 (miniflare-email-store)` 这一真实原因 |
+| 缺少 Void 相关坑 | **新增**：`no_bundle:true` 绕过 esbuild、`.env` 只允许一个文件 |
+
+新增内容：首次部署必须 `--secrets-file`、后续不带会清空 secrets、`void deploy` 只认 API Token。
+
+### 三、口径回改（发现并修正）
+
+`docs/deploy-live-record.md` 里模型写的是 `auto/deepseek-v4.1-flash`，
+但线上实际已切到 `auto/hy3` —— **下游文档口径过期，已回改**。
+
+### 四、复盘回流：本工作流可改进之处
+
+1. **第 1 步「准备」应增加「环境能力自检」**：本次因为假设 spawn 不可用，绕了远路
+   （手写进程内测试执行器、tsc 替代 esbuild）。若第 1 步先自检，能省一轮返工。
+2. **第 8 步「提交」之后应显式排第 10 步**：本次流程状态里漏记第 10 步，
+   是因为部署/E2E 的讨论盖过了它。建议流程状态清单里预置第 10 步占位。
 
 ## 部署记录（2026-10-23）
 
-**状态：已上线** ✅
+**状态：已上线且真实可用** ✅
 
 | 项 | 值 |
 |----|-----|
 | URL | https://meeting-digest.ilikesaury.workers.dev |
 | Worker 名 | `meeting-digest` |
-| Version ID | `0d991259-77aa-4fc7-95e4-659954124b1c` |
+| Version ID | `4bf2e4cb-e67a-4c03-802b-bf7b9a8bf9f1` |
 | 账号 | `e279d1f8bcb29c72945905179e57faeb`（Ilikesaury@gmail.com） |
 | 部署方式 | `wrangler deploy --secrets-file`（Void 的 `void deploy` 需 `CLOUDFLARE_API_TOKEN`，本机只有 wrangler OAuth） |
-| Secrets | `MAGPIE_BASE_URL` / `MAGPIE_API_KEY` / `MAGPIE_MODEL` —— **当前为占位值，需替换真实凭据** |
-| 资产 | 7 个静态文件 + 9 个 Worker 模块，总 1245 KiB / gzip 260 KiB |
+| Secrets | `MAGPIE_BASE_URL` / `MAGPIE_API_KEY` / `MAGPIE_MODEL` / `ACCESS_TOKEN` —— **已配真实值** |
+| 模型 | `auto/hy3`（线上实测 24.8s / 6 板块齐全） |
+| 资产 | 7 个静态文件 + 9 个 Worker 模块，总 1246 KiB / gzip 261 KiB |
 
 ### 线上验证矩阵（6/6 PASS）
 | 用例 | 期望 | 实际 | 结果 |

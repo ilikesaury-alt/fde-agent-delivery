@@ -50,7 +50,7 @@
 | 变量 | 说明 | 是否敏感 |
 |------|------|----------|
 | `MAGPIE_BASE_URL` | magpie 中转的 OpenAI 兼容端点，如 `https://xxx/v1` | 否 |
-| `MAGPIE_MODEL` | 模型名，如 `deepseek-chat` / `gpt-4o-mini` | 否 |
+| `MAGPIE_MODEL` | 模型名，如 `auto/hy3` / `auto/deepseek-v4.1-flash` | 否 |
 | `MAGPIE_API_KEY` | 中转服务密钥 | **是，本地放 `.env`（已 gitignore）；生产用 `void secret put MAGPIE_API_KEY`** |
 
 配置方式：
@@ -104,7 +104,7 @@
 
 1. **结果区为纯文本渲染**：`pre-wrap` 展示 Markdown 原文，不渲染加粗/表格样式（刻意从简，复制后由目标工具排版）。**渲染必须用带净化的渲染器，禁止 innerHTML 直插**。
 2. **无自动重试（用户侧）**：LLM 超时 25 秒后报错，需用户手动重试。结构不完整时服务端会自动重试一次。
-3. **日报质量依赖模型**：`deepseek-chat` 与 `gpt-4o-mini` 效果有差异；温度固定 0.3 偏保守。
+3. **日报质量依赖模型**：`auto/hy3` 与 `auto/deepseek-v4.1-flash` 效果有差异（hy3 慢约 5 倍但输出更细致）；温度固定 0.3 偏保守。
 4. **长文本直接拒绝而非分段**：MVP 策略，超 30000 字符即拒。
 5. **同源部署无 CORS 问题**：Void 把前端与 API 放同一 Worker，因此不再需要 `ALLOWED_ORIGIN` 配置（`env.ts` 仍保留该变量以备跨域场景）。
 6. **防刷未做**：无速率限制，依赖 Cloudflare 免费额度；被滥用时会消耗 magpie 配额。

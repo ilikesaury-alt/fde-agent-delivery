@@ -11,7 +11,7 @@
 | Worker | `meeting-digest` |
 | Version ID | `9ff7d341-ff29-4ffb-b660-ee4986c21f8c` |
 | 上游网关 | https://tahoe-mainland-selection-cigarette.trycloudflare.com/v1 |
-| 模型 | `auto/deepseek-v4.1-flash` |
+| 模型 | `auto/hy3` |
 
 ## 网页使用
 
@@ -84,7 +84,7 @@ curl -X POST https://meeting-digest.ilikesaury.workers.dev/api/digest \
         ↓
   → 本机 magpie 网关 127.0.0.1:3425
      ├─ 校验 Gateway key（Bearer）
-     └─ 路由 auto/deepseek-v4.1-flash
+     └─ 路由 auto/hy3
 ```
 
 ## ⚠️ 临时方案，会失效
