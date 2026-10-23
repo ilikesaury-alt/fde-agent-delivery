@@ -35,6 +35,19 @@ export default function MeetingDigest() {
   const fileRef = useRef<HTMLInputElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 访问令牌：从 localStorage 读取（首次为空则显示输入框）
+  const [token, setToken] = useState("");
+  const [tokenSaved, setTokenSaved] = useState(true);
+
+  useEffect(() => {
+    const saved =
+      window.localStorage.getItem("md_token") ||
+      (window as { __MD_TOKEN__?: string }).__MD_TOKEN__ ||
+      "";
+    setToken(saved);
+    setTokenSaved(Boolean(saved));
+  }, []);
+
   // 从后端同步阈值，避免两处硬编码漂移
   useEffect(() => {
     fetch("/api/health")
@@ -102,7 +115,10 @@ export default function MeetingDigest() {
     try {
       const resp = await fetch("/api/digest", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ text }),
         signal: timeout.signal,
       });
@@ -174,6 +190,42 @@ export default function MeetingDigest() {
           粘贴会议文本，或上传 <code>.txt</code> / <code>.md</code> 文件，一键生成结构化日报。
         </p>
       </header>
+
+      {!tokenSaved ? (
+        <section className="panel token-panel">
+          <div className="panel-head">
+            <label htmlFor="tokenInput" className="label">
+              访问令牌（首次使用需填写一次）
+            </label>
+          </div>
+          <p className="hint" style={{ marginTop: 0 }}>
+            本工具已开启访问保护，请输入你的访问令牌。令牌会保存在本浏览器，不会上传。
+          </p>
+          <div className="toolbar" style={{ marginTop: 8 }}>
+            <input
+              id="tokenInput"
+              className="textarea token-input"
+              type="password"
+              placeholder="粘贴访问令牌…"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              style={{ minHeight: 0, height: 38 }}
+            />
+            <button
+              className="btn-primary"
+              type="button"
+              disabled={!token.trim()}
+              onClick={() => {
+                window.localStorage.setItem("md_token", token.trim());
+                setTokenSaved(true);
+                setHint({ msg: "令牌已保存。", kind: "success" });
+              }}
+            >
+              保存
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel">
         <div className="panel-head">

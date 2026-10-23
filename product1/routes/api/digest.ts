@@ -4,10 +4,11 @@
  * 响应：{ digest: string } | { error: string }
  *
  * 错误映射：
+ *   401 访问令牌缺失/错误（仅当配置了 ACCESS_TOKEN）
  *   400 请求体非 JSON / text 非字符串 / 空输入
  *   413 超长
- *   503 未配置 magpie 凭据
- *   502 LLM 失败 / 结构不完整
+ *   503 未配置上游凭据
+ *   502 上游失败 / 结构不完整
  */
 
 import { defineHandler } from "void";
@@ -33,7 +34,34 @@ function resolveFetch(c: unknown): typeof fetch {
   return ctx._fetchImpl ?? fetch;
 }
 
+/**
+ * 访问令牌校验。配置了 ACCESS_TOKEN 时，请求必须带 `Authorization: Bearer <token>`。
+ * 用等长比较降低时序侧信道（本场景风险低，但成本也低）。
+ */
+export function checkAccessToken(
+  configured: string | undefined,
+  header: string | undefined,
+): boolean {
+  if (!configured) return true; // 未配置 = 不校验
+  if (!header) return false;
+  const m = /^Bearer\s+(.+)$/i.exec(header.trim());
+  if (!m) return false;
+  const provided = m[1];
+  if (provided.length !== configured.length) return false;
+  let diff = 0;
+  for (let i = 0; i < configured.length; i++) {
+    diff |= configured.charCodeAt(i) ^ provided.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 export const POST = defineHandler(async (c) => {
+  const envObj = (c as { env?: Record<string, string> }).env ?? {};
+
+  if (!checkAccessToken(envObj.ACCESS_TOKEN, c.req.header("authorization"))) {
+    return c.json({ error: "未授权：缺少或错误的访问令牌。" }, 401);
+  }
+
   let text: unknown;
   try {
     const body = (await c.req.json()) as { text?: unknown };
@@ -70,7 +98,7 @@ export const POST = defineHandler(async (c) => {
     return c.json({ digest });
   } catch (e) {
     if (e instanceof MissingConfigError) {
-      // 标准 7：未配置时返回明确文案，不泄露堆栈
+      // 未配置时返回明确文案，不泄露堆栈
       return c.json({ error: e.message }, 503);
     }
     if (e instanceof LLMError) {

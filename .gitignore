@@ -19,6 +19,7 @@ wrangler.toml.local
 # 本地工具目录
 md-tools/
 .workbuddy/
+tools/
 
 # 调研阶段克隆的第三方参考仓库（不属于本产品交付物，避免混入历史）
 research/
