@@ -1,15 +1,18 @@
 /**
- * 轻量测试执行器（进程内运行，规避沙箱对 node --test 子进程 spawn 的限制）
+ * 轻量测试执行器（进程内运行）
  * 运行：node --experimental-strip-types test/run.ts
  */
 
-import { cases } from "./digest.test.ts";
+import { cases as digestCases } from "./digest.test.ts";
+import { cases as markdownCases } from "./markdown.test.ts";
+
+const allCases = [...digestCases, ...markdownCases];
 
 let pass = 0;
 let fail = 0;
 const failures: string[] = [];
 
-for (const c of cases) {
+for (const c of allCases) {
   try {
     await c.fn();
     pass++;
