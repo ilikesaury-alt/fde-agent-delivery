@@ -3,6 +3,13 @@
 > 个人 FDE 作品集 · 产品 ① — 把会议原始文本一键整理成结构化日报的网页工具。
 > 技术栈：**Void**（Cloudflare × VoidZero 开源的全栈 Vite 工具链）+ React + Hono 路由 + magpie 中转。
 
+## 🚀 线上地址
+
+**https://meeting-digest.ilikesaury.workers.dev**
+
+> ⚠️ 当前部署用的是**占位 magpie 凭据**，生成功能会返回「AI 服务暂不可用」。
+> 替换真实凭据见下方「配置模型服务」。
+
 粘贴会议录音转写稿或笔记，一键生成包含「主题 / 时间与参会人 / 核心结论 / 待办事项 / 遗留问题 / 一句话摘要」6 个板块的 Markdown 日报。
 
 ## 为什么用 Void
@@ -70,6 +77,15 @@ cd product1
 void deploy --backend cloudflare --provision   # 部署到你自己的 Cloudflare 账号
 ```
 
+> **实际部署方式（已验证）**：本机只有 wrangler 的 OAuth 凭据，而 Void 只认 `CLOUDFLARE_API_TOKEN`，
+> 因此用 wrangler 直接部署构建产物：
+> ```bash
+> npm run build
+> cd dist/ssr
+> wrangler deploy --secrets-file <path-to-secrets.env>
+> ```
+> 首次部署必须用 `--secrets-file`（Worker 尚不存在时无法预先 `wrangler secret put`）。
+
 ## 验收标准（8 项）
 
 | # | 标准 | 验证状态 |
@@ -77,10 +93,10 @@ void deploy --backend cloudflare --provision   # 部署到你自己的 Cloudflar
 | 1 | 粘贴文本生成含全部 6 板块的 Markdown 日报 | ✅ 自动化 + **真实 E2E 证据**（`docs/e2e-evidence/T01-digest-output.json`） |
 | 2 | 上传 .txt/.md 与粘贴等效 | ⏳ 待 E2E |
 | 3 | 上传 .docx/.pdf 被拒绝并提示 | ✅ 自动化 |
-| 4 | 空输入禁用提交 | ✅ 自动化 |
-| 5 | 超长阈值友好报错 | ✅ 自动化 |
+| 4 | 空输入禁用提交 | ✅ 自动化 + **线上验证** |
+| 5 | 超长阈值友好报错 | ✅ 自动化 + **线上验证** |
 | 6 | 一键复制成功有反馈 | ⏳ 待 E2E |
-| 7 | 未配置凭据返回明确错误，不泄露堆栈 | ✅ 自动化 |
+| 7 | 未配置凭据返回明确错误，不泄露堆栈 | ✅ 自动化 + **线上验证** |
 | 8 | 前端无密钥硬编码 | ✅ 人工审查 |
 
 ## 错误处理约定

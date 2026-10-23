@@ -51,8 +51,9 @@ export async function callLLM(
   const model = e.MAGPIE_MODEL || "deepseek-chat";
 
   const controller = new AbortController();
-  // 25s：留足 Worker 请求时长预算，避免平台先掐断导致前端只能看到连接错误
-  const timeout = setTimeout(() => controller.abort(), 25_000);
+  // 85s：实测真实模型生成完整 6 板块日报约 26–36s（含推理 tokens），25s 会误杀正常请求。
+  // Workers 的 CPU 限制不包含 fetch 等待时间，墙钟不受限；与前端 90s 超时对齐，让后端错误 JSON 先返回。
+  const timeout = setTimeout(() => controller.abort(), 85_000);
 
   try {
     const resp = await fetchImpl(`${base}/chat/completions`, {

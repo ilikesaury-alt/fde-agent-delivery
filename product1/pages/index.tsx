@@ -95,9 +95,9 @@ export default function MeetingDigest() {
     setBusy(true);
     setHint({ msg: "正在整理日报，请稍候…", kind: "info" });
 
-    // 前端侧超时：连接挂起时也要恢复按钮
+    // 前端侧超时：略大于后端 85s，让后端错误 JSON 先回来
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), 40_000);
+    const timer = setTimeout(() => timeout.abort(), 90_000);
 
     try {
       const resp = await fetch("/api/digest", {

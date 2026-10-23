@@ -1,0 +1,42 @@
+{
+  "ranAt": "2026-10-23T09:03:23.553Z",
+  "baseUrl": "http://localhost:8899",
+  "browser": "msedge-headless",
+  "passed": 7,
+  "total": 7,
+  "results": [
+    {
+      "name": "页面加载",
+      "ok": true
+    },
+    {
+      "name": "T02 负例：.pdf 被拒",
+      "ok": true,
+      "detail": "不支持的文件格式「__fake.pdf」，请上传 .txt 或 .md 文件。"
+    },
+    {
+      "name": "T02 负例：二进制伪装 .txt 被拒",
+      "ok": true,
+      "detail": "「__binary.txt」看起来是二进制文件，请另存为纯文本（UTF-8）后再上传。"
+    },
+    {
+      "name": "T02 正例：文件载入 textarea",
+      "ok": true,
+      "detail": "445 chars"
+    },
+    {
+      "name": "生成日报：6 板块齐全",
+      "ok": true,
+      "detail": "499 chars"
+    },
+    {
+      "name": "T06：按钮出现「已复制 ✓」反馈",
+      "ok": true
+    },
+    {
+      "name": "T06：剪贴板内容与日报一致",
+      "ok": true,
+      "detail": "523 chars (CRLF) vs 499 chars"
+    }
+  ]
+}
