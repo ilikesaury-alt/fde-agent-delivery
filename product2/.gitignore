@@ -1,0 +1,12 @@
+node_modules/
+.npm-cache/
+dist/
+.void/
+.wrangler/
+.wrangler-local.json
+.miniflare/
+.mf-local/
+miniflare-email-store/
+.env
+.env.local
+*.log
