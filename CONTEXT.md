@@ -396,10 +396,10 @@ fde-agent-delivery/
 
 ### 二、Skill 产出
 
-> **路径口径（2026-10-26 晚定稿）**：两个 Skill **只存项目副本** `.pi/skills/<name>/SKILL.md`，
-> 全局库 `E:/Obsidian/lic-notebook/skills/` 下的同名目录**已删除**（单一真源，避免两份漂移）。
+> **路径口径（2026-10-26 晚定稿）**：两个 Skill **真源在全局库** `E:/Obsidian/lic-notebook/skills/`，
+> 项目内 `.pi/skills/` 为 junction 链接（不进 git）。重建步骤见 `docs/pi-skills-setup.md`。
 
-**1. `perf-hang-triage`（`.pi/skills/perf-hang-triage/SKILL.md`，9,968 字节）**
+**1. `perf-hang-triage`（9,968 字节）**
 
 把「先选观测工具，再设计实验」这个教训固化成决策树，防止下次再走排除法：
 
@@ -412,7 +412,7 @@ fde-agent-delivery/
 | 验收标准 5 条 | 定位到具体层 / 必须有 Profiler 证据 / 修复前后量化 / ≥20 轮复测 / 根因解释所有观测 |
 | 踩过的坑 5 条 | 17 脚本浪费、Profiler 太晚、用户提示后反而加假设、继承错误结论、.env BOM |
 
-**2. `cf-worker-local-env`（`.pi/skills/cf-worker-local-env/SKILL.md`，6,594 字节，此前全局目录为空）**
+**2. `cf-worker-local-env`（6,594 字节）**
 
 | 内容 | 作用 |
 |------|------|
@@ -470,23 +470,38 @@ pi 只扫描固定目录（`~/.pi/agent/skills/`、项目 `.pi/skills/`、`.agen
    解法：`~/.pi/agent/trust.json` 写入 `{"<项目绝对路径>": true}`，
    或交互模式首次进入时选「Trust」。
 
-**定稿方案**：
+**定稿方案（2026-10-26 最终）**：
 
 | 项 | 值 |
 |----|-----|
 | 全局 `~/.pi/agent/settings.json` | **不含** `skills` 字段 |
-| 本项目 `.pi/skills/` | `perf-hang-triage`、`cf-worker-local-env`（唯一真源） |
-| `~/.pi/agent/trust.json` | `{"H:\Work\Projects\Personal\fde-agent-delivery": true}` |
-| 全局库 `E:/Obsidian/lic-notebook/skills/` | 21 个通用流程 Skill；**本项目沉淀的 2 个已从全局删除** |
+| 全局库 `E:/Obsidian/lic-notebook/skills/` | 23 个 Skill（21 个通用流程 + 本项目沉淀的 2 个）—— **真源** |
+| 本项目 `.pi/skills/` | `perf-hang-triage`、`cf-worker-local-env` 的 **junction 链接**（不跟 git）|
+| `.gitignore` | 已排除 `.pi/skills/` |
+| `~/.pi/agent/trust.json` | `{"H:\\Work\\Projects\\Personal\\fde-agent-delivery": true}` |
+| 重建说明 | `docs/pi-skills-setup.md` |
+
+**为何两个 skill 都放全局库（而非项目独立副本）**：
+二者内容都是**通用能力**——`perf-hang-triage` 是页面卡死分层诊断，
+`cf-worker-local-env` 是 Cloudflare Workers 环境约束（163 行里无 `meeting-digest` 硬编码，
+1101 也是通用错误码）。它们只是**在本项目里被沉淀**，不代表**只对本项目有用**。
+放全局库可跨项目复用，且享受 Obsidian 库的 git 版本保护。
+
+**为何用 junction 而非软链接**：Windows 上 `mklink /D`（符号链接）需管理员权限或开发者模式，
+`mklink /J`（junction）普通用户即可。Git Bash 的 `ln -s` 无权限时会**静默降级成复制**（踩过）。
+
+**为何 `.pi/skills/` 不进 git**：`core.symlinks=false`（Windows 默认）下，git 把 junction 当真实目录、
+跟随进去存**文件副本**，克隆后链接关系丢失、退化成会漂移的独立副本。
 
 **验证**：
 - 本项目：`cf-worker-local-env, perf-hang-triage, ego-browser, council-mode, pi-subagents`
 - 其他项目：`ego-browser, council-mode, pi-subagents`（不受影响）
 - 自动路由生效：问「点输入框后 CDP timed out」→ 正确选中 `perf-hang-triage`
+- 链接双向生效：改动全局库 → 项目内立刻可见（已实测）
 
 **使用方式**：
 - 本项目沉淀 Skill：**自动加载，无需告知**
-- 通用流程 Skill（`dev-task-flow`/`bugfix-flow` 等 21 个）：需显式 `/skill:name` 或 `pi --skill <path>`
+- 其他 21 个通用流程 Skill（`dev-task-flow`/`bugfix-flow` 等）：需显式 `/skill:name` 或 `pi --skill <path>`
 
 **教训**：Skill 自动发现不是「文件放对位置」就够，还要过两关——
 ① 在 pi 的扫描目录内；② 项目级目录需通过信任校验。

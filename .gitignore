@@ -50,3 +50,6 @@ tmp-*.log
 
 # pi 运行时任务产物
 .pi/tasks/
+
+# pi 本地资源（含 junction 链接，git 无法表达语义；重建见 docs/pi-skills-setup.md）
+.pi/skills/

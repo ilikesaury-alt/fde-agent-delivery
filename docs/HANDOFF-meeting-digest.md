@@ -80,6 +80,31 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 **注意**：本环境勿再直接 `wrangler deploy` 当前 `dist/ssr/wrangler.json`，会再次 1101。
 证据与完整复盘：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-REPORT.md`（含“重要更正”段）、`LOCAL-DEV.md`、各 `ego-*.mjs`。
 
+## ✅ focus-hang 已解决（2026-10-26 晚，最终）
+
+**根因**：`pages/layout.tsx` 返回 `<html>/<head>/<body>`，违反 Void Pages 约定（layout 必须返回 fragment）。
+Void 把 layout 输出挂进 `<div id="app">` → `<meta>/<title>` 进了 `#app`、`html/head/body` 被压成注释 → **SSR 水合错位**
+→ React 聚焦表单控件时 `Wt()→fm()` 反查 fiber 缓存永不命中、反复遍历上万次 → 主线程阻塞 15–31 秒。
+
+**修复**：`layout.tsx` 改返回 `<>{children}</>`；head 移到 `void.config.ts` 站点配置 + `pages/index.server.ts` 的 `defineHead()`。
+
+**验证**：聚焦 textarea **15,651ms → 0ms**；20 轮连续点击 **0/20 卡死**；线上版本 `a62f2e7f` 真实 LLM 生成 6 板块 + 表格，全程最大长任务仅 115ms。
+
+完整报告：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`
+
+## LLM 接入（2026-10-26 更新）
+
+- 新隧道：`https://corporate-relationship-possibility-considered.trycloudflare.com`（旧 `tahoe-mainland-selection-cigarette` 已失效）
+- 模型：`group/cheap-first`（便宜优先路由组，实际路由 `deepseek-v4.1-flash`）
+- 隧道重启后域名会变，用 `wrangler versions secret put MAGPIE_BASE_URL` 更新，**无需重新部署代码**
+
+## pi Skill 配置
+
+本项目沉淀的 2 个 Skill（`perf-hang-triage`、`cf-worker-local-env`）
+真源在 `E:/Obsidian/lic-notebook/skills/`，项目内 `.pi/skills/` 为 junction 链接（不进 git）。
+重建步骤见 `docs/pi-skills-setup.md`。
+
 ## 未解决 / 待办
-1. **E2E 待跑**：T02（文件上传）、T06（剪贴板）尚无真机证据（见 `docs/e2e-evidence/T02-T06-browser-evidence.json` 待补）。
-2. **预留接口未迁入**：v1 的 `transcribe.ts`（ASR）/`chunk.ts`（分块）在 v2 未建，如需要应由 `routes/` 承接。
+1. **预留接口未迁入**：v1 的 `transcribe.ts`（ASR）/`chunk.ts`（分块）在 v2 未建，如需要应由 `routes/` 承接。
+2. **隧道为临时方案**：cloudflared 重启/断网 → 域名变 → 需更新 secret（电脑关机也调不通）。
+3. **真实用户感知未验证**：focus-hang 的 15–31 秒阻塞是否影响真人交互，尚未用真实浏览器手动验证（自动化工具已确认修复）。
