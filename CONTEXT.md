@@ -313,6 +313,9 @@ fde-agent-delivery/
 
 ### 二、Skill 维护（做减法）
 
+> ⚠️ **更正（2026-10-26 晚）**：本节声称“已更新 `cf-worker-local-env/SKILL.md`”是**不实的**——
+> 当时该目录**是空的**，文件从未落盘（只做了口头盘点）。已于本次真正写入，见下方「第二次沉淀」。
+
 **更新 `E:\Obsidian\lic-notebook\skills\cf-worker-local-env\SKILL.md`**：
 
 | 过时约束 | 处理 |
@@ -371,3 +374,81 @@ fde-agent-delivery/
    必须用 `wrangler deploy --secrets-file <path>`。
 4. **PowerShell 5.1 读错误流有 bug**：`Invoke-WebRequest` 对 4xx/5xx 返回空 body，
    误判为「响应体缺失」。→ 改用 .NET `HttpClient` 才能读到真实 body。
+
+---
+
+## 第 10 步复盘（第二次沉淀，2026-10-26 晚 · capture-experience）
+
+> 触发：focus-hang 排查耗时过长，用户要求总结原因并沉淀。
+> 依据 `E:/Obsidian/lic-notebook/skills/capture-experience/SKILL.md` 流程执行。
+
+### 一、重复流程识别
+
+| 重复操作 | 次数 | 是否沉淀 | 去向 |
+|----------|------|----------|------|
+| 浏览器探针诊断卡死（17 个脚本，真正有效 5 个） | 17 | ✅ | 新建 `perf-hang-triage` |
+| `wrangler` 部署 / secret / rollback（含 3 次参数试错） | ~14 | ✅ | 补写 `cf-worker-local-env` |
+| 本地 shim 起服务（含 1 次 .env BOM 失败） | 3 | ✅ | 并入 `cf-worker-local-env` |
+| ego-browser API 试错（type/newPage/screenshot/evaluateHandle） | 6 | ✅ | 写入两个 Skill 的踩坑段 |
+| 1101 根因比对部署日志 | 1 | ❌ 一次性 | 仅写入 Skill 案例 |
+| magpie 隧道切换 | 1 | ❌ 一次性 | 不沉淀 |
+| layout 水合错位修复 | 1 | ❌ 一次性（但坑要写活） | 写入 `perf-hang-triage` 第 4 步 |
+
+### 二、Skill 产出
+
+**1. 新建 `skills/perf-hang-triage/SKILL.md`（9,968 字节）**
+
+把「先选观测工具，再设计实验」这个教训固化成决策树，防止下次再走排除法：
+
+| 内容 | 作用 |
+|------|------|
+| 第 1 步 H1–H4 分层判据表 | 四种故障用四种探针区分，禁止混用 |
+| 第 2 步「确认 H1 后直接上 Profiler」 | 本次最大失误：第 8 个实验才用 Profiler |
+| 第 3 步分治顺序（JS → CSS → 极简页） | 固定顺序，A 必须排第一 |
+| 第 4 步「框架内部函数 → 查约定」 | 本次真正根因所在，含水合错位完整案例 |
+| 验收标准 5 条 | 定位到具体层 / 必须有 Profiler 证据 / 修复前后量化 / ≥20 轮复测 / 根因解释所有观测 |
+| 踩过的坑 5 条 | 17 脚本浪费、Profiler 太晚、用户提示后反而加假设、继承错误结论、.env BOM |
+
+**2. 补写 `skills/cf-worker-local-env/SKILL.md`（6,594 字节，此前目录为空）**
+
+| 内容 | 作用 |
+|------|------|
+| 第 0 步环境能力自检 | 不假设沙箱限制，先跑再决定路线 |
+| 本地开发替代方案 | workerd 起不来时用纯 Node 跑 SSR bundle |
+| 1101 事故完整复盘 | 资产上传被跳过（`assetUploadFileCount: 0`）→ 每次请求读 ASSETS 抛异常 |
+| 部署铁律 4 条 | 必须 `versions view` 验证 ASSETS 绑定、必须查日志资产行 |
+| 更新 secrets 不重部署 | `versions secret put` → `versions view` → `deploy --secrets-file` |
+| 回滚坑 | 必须完整 version ID；回滚前确认目标是「最近好版本」而非「当天第一个版本」 |
+
+### 三、本次排查的时间账（诚实记录）
+
+| 阶段 | 工具调用 | 评价 |
+|------|----------|------|
+| UI 恢复 + 1101 定位 | ~15 | 合理 |
+| **focus-hang 排查** | **~30（17 个脚本）** | **主要问题** |
+| magpie 切换 | ~10 | 3 次参数试错 |
+| 文档 + 提交 | ~5 | 合理 |
+
+**正确路径本应是 3 个实验、约 5 分钟**：
+```
+1. longtask + Profiler 一起上 → 拿到 "30s，函数 fm"
+2. 看到 fm 遍历 previousSibling → 问"为什么 React 找不到 fiber"
+3. hydration-check 对比 SSR vs 水合后 DOM → 看到 <!--html--> 注释 → 根因
+4. 改 layout，20 轮复测
+```
+
+### 四、三条可迁移教训
+
+1. **先选观测工具，再设计实验。** 不要问「可能是 CSS 吗？可能是运行时吗？」，要为每个问题造脚本。
+   先问「我要测的量是什么」——答案通常是「主线程阻塞时长 + 谁在占用」，那就只有一个工具组合。
+2. **排除法的每个分支都要付固定成本。** 单次实验 2–4 分钟时，排除 6 个假设 = 20 分钟，
+   直接定位 = 5 分钟。**只有当直接定位不可行时才用排除法。**
+3. **继承前人结论时，先质疑它的推理链。** `ROOT-CAUSE-REPORT` 写着「截图超时 = 渲染进程卡死」，
+   我一开始接受了，后来测极简 `data:` 页才发现截图恒超时。**这个错误结论是把所有人带偏的源头。**
+
+### 五、做减法（本次未删任何 Skill）
+
+- 检查了 23 个 Skill 与新 Skill 的重叠：`perf-hang-triage` 与 `code-reality-check`
+  （文档-代码一致性）、`bugfix-flow`（改 Bug 流程）**领域不同，无重叠**，无需合并。
+- 未发现因模型能力升级而过时的 Skill。
+- 下次可考虑：`bugfix-flow` 在「定位」步骤引用 `perf-hang-triage`，但当前保持独立，避免耦合。
