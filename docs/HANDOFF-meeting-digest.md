@@ -40,17 +40,34 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 | vite dev 因 workerd spawn 失败 | ✅ 已验证 |
 | 普通终端能 `npm run dev` | ⚠️ 推测，未验证 |
 | magpie 真实调用（v2 路径） | ⚠️ 未验证（v1 期证据可用作旁证） |
-| `void deploy` 到 Cloudflare | ⚠️ 未验证（需 CF 账号） |
+| `void deploy` / `wrangler deploy` 到 Cloudflare | ✅ 10-23 上线成功；⚠️ 10-26 用 `wrangler deploy --config dist/ssr/wrangler.json` 导致 1101（根因已定位：该次部署**跳过静态资产上传**）。已 `wrangler rollback d204bb4e` 恢复新 UI。部署后必查 `versions view` 资产绑定 |
+| wrangler 已 OAuth 登录可直连部署（绕过 void 云凭据） | ✅ 已验证 |
+| 本地 dev：用 Node shim（`e2e/server.mjs`）绕开 workerd 跑通 SSR | ✅ 已验证 |
+
+## focus-hang 排查（2026-10-26，含重要更正）
+**现象**：线上点击/聚焦 textarea 偶发卡死（连 CDP 截图都超时），几天未定位。
+
+**前期排查结论（成立）**：
+- 旧假设「点击 textarea 触发前端死循环 / header 的 `backdrop-blur` 是元凶」**均被推翻**。
+- 决定性对照：**同一份源码在本地 Node 运行时（shim）点 textarea 6 轮 0 卡死**，而 live 偶发卡死 → 差异在运行时（Node vs Cloudflare workerd），**非源码逻辑 bug**。
+- live 纯加载/静置 20 轮 0 卡死 → 卡死由交互触发，非加载崩溃。
+
+**⚠️ 重要更正**：我曾误报“重新部署即解决、根因是旧 Worker 实例态”。**实为误判**——当时探活用 `evaluate(()=>1+1)`，在 1101 错误页上也能跑通，被错判成“hang 消失”。真相是：**10-26 那次 `wrangler deploy` 让 Worker 启动即抛异常，线上直接 1101 打不开**。已 `wrangler rollback` 回 10-23 好版本 `0d991259`，ego 真机确认恢复。
+
+**✅ 2026-10-26 收尾（UI 已恢复 + 1101 差异已定位）**
+- **UI 恢复**：`wrangler rollback d204bb4e-e06b-48ab-a9e6-d46e97f69800 --name meeting-digest`
+  → 线上回到 **新工作台 UI**（10-23 19:28 部署）。之前回滚到 `0d991259` 是**回退过头**（那是当天第一个版本 = 旧 UI）。
+  真机验证：`title`「会议日报 — 原始记录转结构化纪要」、无 1101、`0 / 30,000` 计数 + `Ctrl↵` + 「就绪」徽章在线、`GET /api/health` 200。
+- **1101 差异定位**：比对 `~/.wrangler/logs` 两次部署日志：
+  12 个 Worker 模块**同名同 hash、字节完全一致**；secrets（4 个）、handlers、compat、bindings 全部一致。
+  **唯一差异：10-26 那次 `assetUploadFileCount: 0` —— 跳过了静态资产上传**（好版本是 8 个文件 / 289,861 bytes，3 次 `POST /workers/assets/upload`）。
+  本 Worker 是 `run_worker_first: ["/**"]`，所有请求先过 Worker 再从 `env.ASSETS` 取资产；资产没绑对 → 每次请求抛异常 → 1101。
+- **部署铁律（新增）**：部署后必须 `wrangler versions view <id>` 确认资产绑定；勿在 node 22 下用 `wrangler deploy --config dist/ssr/wrangler.json`（好部署用的是 node 24）。
+
+**待办**：1101 是部署配置/运行时层面问题（非代码 bug，10-23 同代码正常、本地 shim 也正常）。需在**能访问 Cloudflare 的环境**用 `wrangler tail` 或 Dashboard 查坏版本 `78f584e5` 的异常堆栈定位。坏版本已保留未删。
+**注意**：本环境勿再直接 `wrangler deploy` 当前 `dist/ssr/wrangler.json`，会再次 1101。
+证据与完整复盘：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-REPORT.md`（含“重要更正”段）、`LOCAL-DEV.md`、各 `ego-*.mjs`。
 
 ## 未解决 / 待办
-1. **E2E 待跑**（完成闸门）：`npm run dev` 后按交付文档 T01–T09 执行。T02（文件上传）、
-   T06（剪贴板）尚无证据。
-2. **未提交**：需 commit 并标 `E2E pending`。
-3. **未部署**：`void deploy --backend cloudflare --provision` 未验证（需 CF 账号授权）。
-4. **预留接口未迁入**：v1 的 `transcribe.ts`（ASR）/`chunk.ts`（分块）在 v2 未建，
-   如需要应由 `routes/` 承接。
-
-## 下一步建议
-1. 普通终端 `cd product1 && npm run dev`，跑 T01–T09 补证据。
-2. 配 `void secret put MAGPIE_API_KEY` 后试 `void deploy`。
-3. 之后启动产品②（建议也用 Void，模板见 `FDE作品调研与模仿起步方案.md` 第 8 节）。
+1. **E2E 待跑**：T02（文件上传）、T06（剪贴板）尚无真机证据（见 `docs/e2e-evidence/T02-T06-browser-evidence.json` 待补）。
+2. **预留接口未迁入**：v1 的 `transcribe.ts`（ASR）/`chunk.ts`（分块）在 v2 未建，如需要应由 `routes/` 承接。

@@ -102,8 +102,17 @@ v1 代码保留在 `legacy/worker-v1`、`legacy/frontend-v1`（仅作对照，�
 4. **esbuild/workerd 的 postinstall 无法执行**（下载原生二进制需 spawn）→ 用 `npm install --ignore-scripts` + 平台包（`@cloudflare/workerd-windows-64`、`@esbuild/win32-x64`）自带二进制绕过。
 5. **npm 默认缓存目录不可写**（`C:\Users\lichun\AppData\Local\npm-cache`）→ `.npmrc` 设 `cache=./.npm-cache`。
 6. **tsc 的 `.ts` 扩展名 import 与 emit 冲突**：`allowImportingTsExtensions` 要求 `noEmit`。解法：源码 import 改为无扩展名，构建用独立 `tsconfig.build.json`（`noEmit:false` + `allowImportingTsExtensions:false`），`scripts/build.mjs` 输出到 `dist/`。
+7. **本地 dev 跑通用 Node shim 绕过 workerd**（2026-10-26）：sandbox 起不了 workerd，但 `product1/e2e/server.mjs` 用纯 Node 跑 `dist/ssr/index.js`（SSR + 静态资源）即可在 `:8899` 完整渲染页面。**坑**：① 端口 8899 常被旧 shim 进程占用（`pkill` 在此 shell 不存在，用 Node `netstat -ano | findstr :8899` + `process.kill(pid,'SIGKILL')`）；② `dist` 可能被别的项目构建产物污染，需 `rm -rf dist` 重建；③ shim 无 `ACCESS_TOKEN`，要在 localStorage 写入 `md_token` 过前端门禁才有 `#textInput`。详见 `docs/e2e-evidence/focus-hang/LOCAL-DEV.md`。
 
-### 待用户在无受限环境执行
+### 线上偶发卡死 / 部署崩 1101（2026-10-26 经验，含更正）
+- 现象：线上点击/聚焦 textarea 偶发卡死（连 CDP 截图都超时），几天未定位，一度误判为「前端 textarea 死循环 / header backdrop-blur」。均错。
+- 前期排查（成立）：同一份代码在本地 Node 运行时点 textarea 6 轮 0 卡死、live 偶发 → 差异在运行时（Node vs workerd），非源码逻辑 bug；live 纯加载/静置 20 轮 0 卡死 → 卡死由交互触发。
+- **重要更正**：我曾误报「重部署即解决、根因是旧实例态」。真相是：**10-26 那次 `wrangler deploy --config dist/ssr/wrangler.json` 让 Worker 启动即抛异常，线上直接 Error 1101 打不开**（我当时的探活用 `evaluate(()=>1+1)`，在 1101 错误页上也能跑通，被错判成 hang 消失）。已 `wrangler rollback` 回 10-23 好版本 `0d991259` 恢复。
+- **本环境勿再直接 `wrangler deploy` 当前 `dist/ssr/wrangler.json`**，会再次 1101。1101 是部署配置/运行时层面问题（非代码 bug：10-23 同代码正常、本地 shim 也正常）。需在有 Cloudflare 访问的环境用 `wrangler tail` / Dashboard 查坏版本 `78f584e5` 的异常堆栈定位。完整复盘见 `docs/e2e-evidence/focus-hang/ROOT-CAUSE-REPORT.md`（含「重要更正」段）。
+- **✅ 2026-10-26 收尾（同日晚）**：
+  - **UI 已恢复**：`wrangler rollback d204bb4e` 把线上指回**新工作台 UI**（不是旧 UI `0d991259`——之前回滚过头了）。ego 真机确认：`title` 正确、无 1101、`0 / 30,000` 计数 + `Ctrl↵` + 「就绪」徽章在线、`/api/health` 200。
+  - **1101 差异已定位**：比对 `~/.wrangler/logs` 两次部署，12 个 Worker 模块**同名同 hash 字节完全一致**、secrets/元数据一致，**唯一差异是 10-26 那次 `assetUploadFileCount: 0`（跳过了静态资产上传，好版本是 8 个文件 289KB）**。本 Worker `run_worker_first: ["/**"]`，资产没绑对 → 每次请求读 `env.ASSETS` 抛异常 → 1101。
+  - **部署前必查**：下次部署后先 `wrangler versions view <id>` 确认资产绑定，或改用 `void deploy`；勿再在 node 22 下用 `wrangler deploy --config dist/ssr/wrangler.json`。
 - 本地起服务：`cd worker && node scripts/dev.mjs` 或 `npx wrangler dev`
 - 部署：配好 `MAGPIE_*` 后 `npx wrangler deploy`
 

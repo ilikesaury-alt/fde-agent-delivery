@@ -31,6 +31,18 @@ legacy/
 .DS_Store
 Thumbs.db
 
+# Windows 保留名误创建的空文件（如 `cmd >nul` 在 Git Bash 下落盘）
+nul
+
+# 临时排查日志
+tmp-*.log
+
 # 编辑器
 .vscode/
 .idea/
+
+# 本地 wrangler 试验配置
+.wrangler-local.json
+
+# 临时 CDP trace 产物（体积大、可重生成）
+**/trace.json
