@@ -396,7 +396,10 @@ fde-agent-delivery/
 
 ### 二、Skill 产出
 
-**1. 新建 `skills/perf-hang-triage/SKILL.md`（9,968 字节）**
+> **路径口径（2026-10-26 晚定稿）**：两个 Skill **只存项目副本** `.pi/skills/<name>/SKILL.md`，
+> 全局库 `E:/Obsidian/lic-notebook/skills/` 下的同名目录**已删除**（单一真源，避免两份漂移）。
+
+**1. `perf-hang-triage`（`.pi/skills/perf-hang-triage/SKILL.md`，9,968 字节）**
 
 把「先选观测工具，再设计实验」这个教训固化成决策树，防止下次再走排除法：
 
@@ -409,7 +412,7 @@ fde-agent-delivery/
 | 验收标准 5 条 | 定位到具体层 / 必须有 Profiler 证据 / 修复前后量化 / ≥20 轮复测 / 根因解释所有观测 |
 | 踩过的坑 5 条 | 17 脚本浪费、Profiler 太晚、用户提示后反而加假设、继承错误结论、.env BOM |
 
-**2. 补写 `skills/cf-worker-local-env/SKILL.md`（6,594 字节，此前目录为空）**
+**2. `cf-worker-local-env`（`.pi/skills/cf-worker-local-env/SKILL.md`，6,594 字节，此前全局目录为空）**
 
 | 内容 | 作用 |
 |------|------|
@@ -452,3 +455,38 @@ fde-agent-delivery/
   （文档-代码一致性）、`bugfix-flow`（改 Bug 流程）**领域不同，无重叠**，无需合并。
 - 未发现因模型能力升级而过时的 Skill。
 - 下次可考虑：`bugfix-flow` 在「定位」步骤引用 `perf-hang-triage`，但当前保持独立，避免耦合。
+
+### 六、Skill 存放位置定稿（2026-10-26 晚）
+
+**问题**：沉淀的 Skill 放在 `E:/Obsidian/lic-notebook/skills/` 时，pi **无法自动识别**——
+pi 只扫描固定目录（`~/.pi/agent/skills/`、项目 `.pi/skills/`、`.agents/skills/` 等），
+该路径不在扫描范围内。
+
+**踩坑记录**：
+1. 曾把整个 `E:/Obsidian/lic-notebook/skills` 加进全局 `settings.json` 的 `skills` 数组
+   → 23 个 Skill 在**每个项目、每个会话**都加载，description 合计约 11,700 字符 ≈ **3,900 tokens 固定成本**。
+2. 改为只放项目 `.pi/skills/` 后**仍不生效**，原因是 `.pi/skills` 属于**受项目信任保护资源**
+   （见 pi `docs/security.md`），非交互模式（`pi -p`）在无信任记录时**静默跳过**。
+   解法：`~/.pi/agent/trust.json` 写入 `{"<项目绝对路径>": true}`，
+   或交互模式首次进入时选「Trust」。
+
+**定稿方案**：
+
+| 项 | 值 |
+|----|-----|
+| 全局 `~/.pi/agent/settings.json` | **不含** `skills` 字段 |
+| 本项目 `.pi/skills/` | `perf-hang-triage`、`cf-worker-local-env`（唯一真源） |
+| `~/.pi/agent/trust.json` | `{"H:\Work\Projects\Personal\fde-agent-delivery": true}` |
+| 全局库 `E:/Obsidian/lic-notebook/skills/` | 21 个通用流程 Skill；**本项目沉淀的 2 个已从全局删除** |
+
+**验证**：
+- 本项目：`cf-worker-local-env, perf-hang-triage, ego-browser, council-mode, pi-subagents`
+- 其他项目：`ego-browser, council-mode, pi-subagents`（不受影响）
+- 自动路由生效：问「点输入框后 CDP timed out」→ 正确选中 `perf-hang-triage`
+
+**使用方式**：
+- 本项目沉淀 Skill：**自动加载，无需告知**
+- 通用流程 Skill（`dev-task-flow`/`bugfix-flow` 等 21 个）：需显式 `/skill:name` 或 `pi --skill <path>`
+
+**教训**：Skill 自动发现不是「文件放对位置」就够，还要过两关——
+① 在 pi 的扫描目录内；② 项目级目录需通过信任校验。
