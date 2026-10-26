@@ -15,6 +15,7 @@ dist/
 !.env.example
 wrangler.toml.local
 .dev.vars
+.secrets.json
 
 # 本地工具目录
 md-tools/
@@ -46,3 +47,6 @@ tmp-*.log
 
 # 临时 CDP trace 产物（体积大、可重生成）
 **/trace.json
+
+# pi 运行时任务产物
+.pi/tasks/

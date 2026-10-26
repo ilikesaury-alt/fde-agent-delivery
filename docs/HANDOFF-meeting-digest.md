@@ -45,6 +45,18 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 | 本地 dev：用 Node shim（`e2e/server.mjs`）绕开 workerd 跑通 SSR | ✅ 已验证 |
 
 ## focus-hang 排查（2026-10-26，含重要更正）
+
+> **✅ 已解决。最终根因报告：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`**
+>
+> 根因是**我们自己的代码**：`pages/layout.tsx` 返回 `<html>/<head>/<body>`，违反 Void Pages 约定（layout 必须返回 fragment）。
+> Void 把 layout 输出挂到 `<div id="app">` 内 → `<meta>/<title>` 进了 `#app`、`html/head/body` 被压成注释 → SSR 水合错位
+> → React 聚焦表单控件时 `Wt()→fm()` 反查 fiber 缓存永不命中、反复遍历上万次 → 主线程阻塞 15–31 秒。
+>
+> **修复**：layout 改返回 `<>{children}</>`；head 移到 `void.config.ts` + `pages/index.server.ts` 的 `defineHead()`。
+> **验证**：聚焦 textarea 15,651ms → **0ms**；20 轮点击 **0/20 卡死**；线上 `a62f2e7f` 真实 LLM 生成 6 板块齐全。
+>
+> 下文为**历史排查过程**，其中若干结论已被推翻，仅作存档。
+
 **现象**：线上点击/聚焦 textarea 偶发卡死（连 CDP 截图都超时），几天未定位。
 
 **前期排查结论（成立）**：

@@ -113,6 +113,19 @@ v1 代码保留在 `legacy/worker-v1`、`legacy/frontend-v1`（仅作对照，�
   - **UI 已恢复**：`wrangler rollback d204bb4e` 把线上指回**新工作台 UI**（不是旧 UI `0d991259`——之前回滚过头了）。ego 真机确认：`title` 正确、无 1101、`0 / 30,000` 计数 + `Ctrl↵` + 「就绪」徽章在线、`/api/health` 200。
   - **1101 差异已定位**：比对 `~/.wrangler/logs` 两次部署，12 个 Worker 模块**同名同 hash 字节完全一致**、secrets/元数据一致，**唯一差异是 10-26 那次 `assetUploadFileCount: 0`（跳过了静态资产上传，好版本是 8 个文件 289KB）**。本 Worker `run_worker_first: ["/**"]`，资产没绑对 → 每次请求读 `env.ASSETS` 抛异常 → 1101。
   - **部署前必查**：下次部署后先 `wrangler versions view <id>` 确认资产绑定，或改用 `void deploy`；勿再在 node 22 下用 `wrangler deploy --config dist/ssr/wrangler.json`。
+
+### ✅✅ focus-hang 已彻底解决（2026-10-26，见 `docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`）
+- **根因（我们自己的代码）**：`pages/layout.tsx` 返回了 `<html>/<head>/<body>`，**违反 Void Pages 约定**（layout 必须返回 fragment，文档外壳由 Void 管）。
+  Void 把 layout 返回值挂到 `<div id="app">` 内，导致 `<meta>/<title>` 出现在 `#app` 里、`html/head/body` 被压成注释标记 → **SSR 水合错位**。
+- **为何卡 30 秒**：水合错位后 React 从 DOM 反查 fiber（`Wt()`）缓存永不命中，落入 `fm()` 的 `previousSibling` 兜底遍历，被反复调用上万次（Profiler 采样命中 10,042 次）→ 主线程阻塞 15–31 秒。只影响**表单控件聚焦**（只有它们走 `focusin` 委托路径）。
+- **修复**：`layout.tsx` 改为返回 `<>{children}</>`；head 元数据移到 `void.config.ts` 站点配置 + 新增 `pages/index.server.ts` 的 `defineHead()`。
+- **验证**：聚焦 textarea 从 **15,651ms → 0ms**；20 轮连续点击 **0/20 卡死**；线上 `a62f2e7f` 真实 LLM 生成 6 板块 + 表格，全程最大长任务仅 115ms。
+- **之前错误结论已推翻**（已写入 FINAL 报告）：① “差异在运行时(Node vs workerd)” —— 本地 shim 同样 30.5s；② “截图超时=渲染进程卡死” —— 极简 `data:` 页截图同样超时，是 ego 环境限制；③ “header backdrop-blur 可疑” —— 移除全部 CSS 仍 30.8s。
+
+### LLM 接入更新（2026-10-26）
+- 旧隧道域名 `tahoe-mainland-selection-cigarette` 已失效，新隧道：`https://corporate-relationship-possibility-considered.trycloudflare.com`
+- 模型切为 **`group/cheap-first`**（“便宜优先”路由组，实际路由到 `deepseek-v4.1-flash`）
+- 更新 secret 用 `wrangler versions secret put`（会建新版本不部署），然后 `wrangler deploy --secrets-file` 一次性带上代码+资产+secrets
 - 本地起服务：`cd worker && node scripts/dev.mjs` 或 `npx wrangler dev`
 - 部署：配好 `MAGPIE_*` 后 `npx wrangler deploy`
 

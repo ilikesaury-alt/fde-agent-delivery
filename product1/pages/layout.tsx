@@ -1,6 +1,16 @@
 /**
  * 全局布局 — Void Pages 约定
- * 在 layout 里引入全局样式，是唯一能保证样式进入产物的位置。
+ * --------------------------------------------------------------------------
+ * ⚠️ 关键：这里必须返回 **fragment**，不能返回 <html>/<head>/<body>。
+ * Void 把 layout 的返回值挂到自己的根容器 <div id="app"> 内；
+ * 若在此输出 html/head/body，Void 会把它们压平成注释标记（<!--html--><!--head-->…），
+ * 造成 DOM 与 React fiber 树错位 —— 表现为聚焦表单控件时 React 的
+ * Wt()/fm() 反查 fiber 走入兜底遍历，主线程被阻塞 30 秒（focus-hang）。
+ *
+ * 文档外壳（html/head/body）由 Void 管理；
+ * head 元数据用 void.config.ts 的 head 配置或页面 head() 设置。
+ *
+ * 本文件负责：引入全局样式（唯一能保证样式进入产物的位置）。
  */
 
 import type { ReactNode } from "react";
@@ -8,19 +18,5 @@ import type { ReactNode } from "react";
 import "../styles.css";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
-    <html lang="zh-CN">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="color-scheme" content="light dark" />
-        <title>会议日报 — 原始记录转结构化纪要</title>
-        <meta
-          name="description"
-          content="粘贴会议记录或上传文本，一键生成含主题、参会人、核心结论、待办、风险与摘要的结构化日报。"
-        />
-      </head>
-      <body>{children}</body>
-    </html>
-  );
+  return <>{children}</>;
 }

@@ -4,5 +4,23 @@ import { defineConfig } from 'void/config';
 export default defineConfig({
   "worker": {
     "compatibility_date": "2026-02-24"
+  },
+  /**
+   * 站点级 head 默认值。
+   * 之前写在 pages/layout.tsx 的 <head> 里，但 layout 必须返回 fragment，
+   * 不能输出 <html>/<head>/<body>（否则造成水合错位 → focus-hang）。
+   */
+  "head": {
+    "titleTemplate": "%s",
+    "htmlAttrs": { "lang": "zh-CN" },
+    "meta": [
+      { "charset": "utf-8" },
+      { "name": "viewport", "content": "width=device-width, initial-scale=1" },
+      { "name": "color-scheme", "content": "light dark" },
+      {
+        "name": "description",
+        "content": "粘贴会议记录或上传文本，一键生成含主题、参会人、核心结论、待办、风险与摘要的结构化日报。"
+      }
+    ]
   }
 });
