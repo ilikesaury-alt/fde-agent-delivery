@@ -55,7 +55,7 @@ node e2e/flow-check.mjs http://127.0.0.1:8901 test-token-123
 
 ## 未解决问题 / 下一步
 1. **部署（第 11 步之前）**：`void deploy --backend cloudflare --provision` + secrets；部署后**必查** `wrangler versions view <id>` 同时有 `env.ASSETS` 与 `env.DB`，并看日志 `assetUploadFileCount > 0`（产品① 1101 教训）。
-2. **人工 E2E 清单（用户执行）**：见 `docs/features/content-studio/内容工作台-交付文档.md` §4，重点 T1（真实链接）、T11（剪贴板）、T12（空输入禁用）、T16（刷新后历史仍在）。
+2. **人工 E2E 清单（用户执行）**：见 `product2/docs/features/content-studio/内容工作台-交付文档.md` §4，重点 T1（真实链接）、T11（剪贴板）、T12（空输入禁用）、T16（刷新后历史仍在）。
 3. 可选改进（按性价比）：
    - 抓取质量：现在靠启发式；若要提升，可换 `HTMLRewriter`（Workers 原生）或针对主流站点加选择器规则
    - 正文长度稳定性：prompt 已给区间，实际仍会波动；可加重试或后置长度矫正
@@ -72,7 +72,7 @@ node e2e/flow-check.mjs http://127.0.0.1:8901 test-token-123
 | 存储（D1/内存）+ SQL | `lib/store.ts` + `db/migrations/0001_init.sql` |
 | SSE 路由 | `routes/api/generate.ts` |
 | 客户端流式消费（超时/终态） | `lib/client-stream.ts` |
-| 交付/测试指引 | `docs/features/content-studio/内容工作台-交付文档.md` |
+| 交付/测试指引 | `product2/docs/features/content-studio/内容工作台-交付文档.md` |
 
 ## 踩过的坑（本产品新增，可迁移）
 1. **`void/sse` 的 keepAlive 是 `setInterval`**：消费端不把流读完（如只断言 status），interval 不会清 → Node 进程挂住不退出。已在 handler 加 `finally { stream.close() }`。

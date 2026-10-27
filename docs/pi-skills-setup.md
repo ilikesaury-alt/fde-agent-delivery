@@ -102,4 +102,4 @@ description 合计约 11,700 字符 ≈ **3,900 tokens 固定成本**。
 ## 相关记录
 
 - `CONTEXT.md` →「第 10 步复盘（第二次沉淀）」→「六、Skill 存放位置定稿」
-- 完整根因报告：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`
+- 完整根因报告：`product1/docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`

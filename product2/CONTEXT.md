@@ -173,7 +173,7 @@ db/migrations/0001_init.sql
 - [x] 第 6 步：人工 Review（验收标准 → 业务路径 → 新增抽象，二次奥卡姆：删临时 M0 探针）
 - [x] 第 7 步：交付文档（product2/docs/features/content-studio/）
 - [x] 第 8 步：提交 5cb55af（已标 E2E pending）
-- [x] 第 9 步：HANDOFF（docs/HANDOFF-content-studio.md）
+- [x] 第 9 步：HANDOFF（`product2/docs/HANDOFF-content-studio.md`）
 - [x] 第 10 步：复盘与 Skill 沉淀（补写 cf-worker-local-env 两节）
 - [x] 第 11 步前置：部署（2026-10-27，version 2ea32819，绑定与资产上传已核验）
 - [x] 第 11 步前置：接口级 E2E（线上 401/200、真 D1 连通）

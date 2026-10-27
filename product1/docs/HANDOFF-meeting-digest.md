@@ -22,7 +22,7 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 - **`void --version` = 0.10.13 可运行**（CLI 本身不 spawn）。
 - **`vite build` 不 spawn**：Void 生成的 `wrangler.json` 带 `"no_bundle": true`，
   Vite 用 Rolldown/Oxc 预打包，wrangler 只上传 → 绕过了 esbuild service。
-- **真实 E2E 证据已归档**：`docs/e2e-evidence/T01-digest-output.json` 是 v1 期用真实 magpie
+- **真实 E2E 证据已归档**：`product1/docs/e2e-evidence/T01-digest-output.json` 是 v1 期用真实 magpie
   凭据生成的日报，6 板块齐全、表格正确、内容忠于原文。v2 复用同一 `lib/prompt.ts`，证据仍有效。
 
 ## 已验证为环境限制（非代码缺陷）
@@ -46,7 +46,7 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 
 ## focus-hang 排查（2026-10-26，含重要更正）
 
-> **✅ 已解决。最终根因报告：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`**
+> **✅ 已解决。最终根因报告：`product1/docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`**
 >
 > 根因是**我们自己的代码**：`pages/layout.tsx` 返回 `<html>/<head>/<body>`，违反 Void Pages 约定（layout 必须返回 fragment）。
 > Void 把 layout 输出挂到 `<div id="app">` 内 → `<meta>/<title>` 进了 `#app`、`html/head/body` 被压成注释 → SSR 水合错位
@@ -78,7 +78,7 @@ Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\no
 
 **待办**：1101 是部署配置/运行时层面问题（非代码 bug，10-23 同代码正常、本地 shim 也正常）。需在**能访问 Cloudflare 的环境**用 `wrangler tail` 或 Dashboard 查坏版本 `78f584e5` 的异常堆栈定位。坏版本已保留未删。
 **注意**：本环境勿再直接 `wrangler deploy` 当前 `dist/ssr/wrangler.json`，会再次 1101。
-证据与完整复盘：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-REPORT.md`（含“重要更正”段）、`LOCAL-DEV.md`、各 `ego-*.mjs`。
+证据与完整复盘：`product1/docs/e2e-evidence/focus-hang/ROOT-CAUSE-REPORT.md`（含“重要更正”段）、`LOCAL-DEV.md`、各 `ego-*.mjs`。
 
 ## ✅ focus-hang 已解决（2026-10-26 晚，最终）
 
@@ -90,7 +90,7 @@ Void 把 layout 输出挂进 `<div id="app">` → `<meta>/<title>` 进了 `#app`
 
 **验证**：聚焦 textarea **15,651ms → 0ms**；20 轮连续点击 **0/20 卡死**；线上版本 `a62f2e7f` 真实 LLM 生成 6 板块 + 表格，全程最大长任务仅 115ms。
 
-完整报告：`docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`
+完整报告：`product1/docs/e2e-evidence/focus-hang/ROOT-CAUSE-FINAL.md`
 
 ## LLM 接入（2026-10-26 更新）
 
