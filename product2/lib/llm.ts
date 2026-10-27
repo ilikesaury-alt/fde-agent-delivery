@@ -54,13 +54,16 @@ function mapStatus(status: number): LLMError {
   return new LLMError();
 }
 
-/** 排查用：仅在 DEBUG_LLM=1 时把上游状态与响应片段打到服务端日志（不上屏、不回传前端） */
-function debugLog(status: number, detail: string): void {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-  const flag = env?.DEBUG_LLM;
-  if (flag && flag !== "0" && flag !== "false") {
-    console.warn(`[llm] upstream ${status}: ${detail.slice(0, 400)}`);
-  }
+/**
+ * 排查用：把上游状态与响应片段打到服务端日志（console.warn 只进 Worker 日志，
+ * 不上屏、不回传前端）。
+ *
+ * 坑：早期版本读 process.env.DEBUG_LLM——Workers 里没有 process，
+ * 这个函数在线上**永远不会打日志**，排查能力为零。改为始终打一行（简短、含状态码），
+ * 需要细节时在 wrangler tail / dashboard logs 里看。
+ */
+function debugLog(status: number | string, detail: string): void {
+  console.warn(`[llm] upstream ${status}: ${detail.slice(0, 300)}`);
 }
 
 /**
@@ -244,7 +247,12 @@ export async function* streamLLM(
     if (!produced) throw new LLMError("AI 返回结果为空，请重试。");
   } catch (err) {
     if (err instanceof MissingConfigError || err instanceof LLMError) throw err;
+    // 区分取消与超时：两者都不是「配置坏了」，用默认文案会误导用户去检查配置
     if (opts.signal?.aborted) throw new LLMError("生成已取消。");
+    if (controller.signal.aborted) {
+      throw new LLMError(`生成超时（${Math.round((opts.timeoutMs ?? 120_000) / 1000)}s 无响应），请重试或精简素材。`);
+    }
+    debugLog("stream-exception", String(err));
     throw new LLMError();
   } finally {
     clearTimeout(timeout);

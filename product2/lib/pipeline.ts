@@ -11,7 +11,7 @@
 
 import { buildCompressMessages, buildNoteMessages } from "./prompt.ts";
 import { isUsableNote, parseNote } from "./note.ts";
-import type { ChatMessage } from "./llm.ts";
+import { type ChatMessage, LLMError } from "./llm.ts";
 import type { GenerationJob, PipelineEvent, SourceType, XhsNote } from "./types.ts";
 
 /** 超过此长度先压缩成要点（约 6000 字 ≈ 8000 token，已超出"一次调用写好笔记"的舒适区） */
@@ -158,9 +158,21 @@ export async function runPipeline(
       await emit({ type: "token", text: delta });
     }
   } catch (err) {
-    // 只把自定义错误的文案上屏；其它原始异常（DOMException / TypeError）统一兜底，
-    // 否则英文内部文案会透到前端
-    const msg = err instanceof PipelineError ? err.message : "生成失败，请稍后重试。";
+    // LLMError / PipelineError 的 message 本来就是面向用户的文案，必须透传。
+    // 早期版本在这里对非 PipelineError 一律兜底，把 LLMError 的具体原因
+    // （凭据无效/超时/上游中断）也吞成了「生成失败，请稍后重试」，
+    // 用户无法判断该重试还是该换方式（本次 X 链接排查即被它拖住）。
+    if (err instanceof PipelineError) {
+      await emit({ type: "step", step: "generate", status: "failed", detail: err.message });
+      throw err;
+    }
+    if (err instanceof LLMError) {
+      await emit({ type: "step", step: "generate", status: "failed", detail: err.message });
+      throw new PipelineError("generate", err.message);
+    }
+    // 真正未知的原始异常：不透出内部细节，但打服务端日志（wrangler tail / dashboard 可见）
+    console.warn(`[pipeline] unknown error: ${String(err)}`);
+    const msg = "生成失败，请稍后重试。";
     await emit({ type: "step", step: "generate", status: "failed", detail: msg });
     throw new PipelineError("generate", msg);
   }
