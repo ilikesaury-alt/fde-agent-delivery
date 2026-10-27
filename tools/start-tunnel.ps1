@@ -24,6 +24,7 @@ param(
   [switch]$NoSync
 )
 
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 
 # --- 每个产品跑 wrangler 的目录（secret 命令要在其 dist/ssr 下执行）---
@@ -130,8 +131,14 @@ $cfArgs = @(
   "--http-host-header", "127.0.0.1:$Port",
   "--no-autoupdate", "--logfile", $logFile, "--loglevel", "info"
 )
-$proc = Start-Process -FilePath $cloudflared -ArgumentList $cfArgs -PassThru -WindowStyle Hidden
-Write-Host "[+] cloudflared PID = $($proc.Id)"
+# 可见窗口 + 明确标题：用 cmd 包装，方便一眼认出「这是隧道，别关」
+# 关掉该窗口 = 主动断开隧道
+$quotedExe = '"' + $cloudflared + '"'
+$cmdLine = 'title CLOUDFLARED TUNNEL - DO NOT CLOSE && ' + $quotedExe + ' ' + ($cfArgs -join ' ')
+$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -PassThru -WindowStyle Normal
+Write-Host "[+] 隧道已启动（cmd PID $($proc.Id)）" -ForegroundColor Green
+Write-Host "    新窗口标题：CLOUDFLARED TUNNEL - DO NOT CLOSE" -ForegroundColor Yellow
+Write-Host "    !!! 关闭那个窗口 = 断开隧道 !!!" -ForegroundColor Yellow
 
 # --- 等待域名出现（最多 45s）---
 $url = $null
