@@ -185,7 +185,7 @@ v1 代码保留在 `legacy/worker-v1`、`legacy/frontend-v1`（仅作对照，�
 
 ### 复验证据（v2 Void 版）
 - `tsc --noEmit` → **exit 0**
-- `node --experimental-strip-types test/run.ts` → **29/29 通过**（含 8 个 Void 路由层用例）
+- `node --experimental-strip-types test/run.ts` → **47/47 通过**（35 业务/路由 + 12 Markdown 渲染）
 - `vite build` → **成功**（SSR 85 modules / client 25 modules，235ms）
 - `vite dev` → **失败**：`ERR_RUNTIME_FAILURE`（workerd 无法 spawn，沙箱边界，非代码缺陷）
 
@@ -247,7 +247,7 @@ fde-agent-delivery/
 │   ├── lib/sections.ts            # hasAllSections 结构校验
 │   ├── lib/llm.ts                 # callLLM：magpie 中转，错误收敛
 │   ├── env.ts                     # Void 声明式 env（MAGPIE_* / ALLOWED_ORIGIN）
-│   ├── test/digest.test.ts        # 29 项用例（21 纯函数 + 8 路由）
+│   ├── test/digest.test.ts        # 47 项用例（35 业务/路由 + 12 Markdown 渲染）
 │   ├── test/run.ts                # 进程内测试执行器（规避 node --test spawn）
 │   ├── vite.config.ts             # voidPlugin() + voidReact()
 │   └── styles.css
@@ -291,7 +291,7 @@ fde-agent-delivery/
 - [x] 第 3.5 步 方案复核：六项过 + 授权
 - [x] 第 4 步 M0（v2）：`void --version` 可运行、`vite build` 成功（153ms / 262ms）
 - [x] 第 4 步 实现（v2）：Void 结构落地（routes/pages/lib/env）
-- [x] 验证：测试 **29/29 通过**、`tsc --noEmit` **exit 0**、`vite build` 成功（SSR 85 + client 25 modules）
+- [x] 验证：测试 **47/47 通过**（含后续补充的 Markdown 渲染用例）、`tsc --noEmit` **exit 0**、`vite build` 成功（SSR 85 + client 25 modules）
 - [x] 第 5 步 交叉对抗审查：5b=中档，子 Agent 4 方向全覆盖，**无阻塞项**；15 项发现已修
 - [x] 第 6 步 人工 Review：验收标准逐条对账 + 高风险点已过
 - [x] 第 7 步 交付文档：`product1/docs/features/meeting-digest/meeting-digest-交付文档.md`

@@ -28,6 +28,7 @@ npx wrangler d1 execute content-studio-db --remote --file=db/migrations/0001_ini
 node node_modules/vite/bin/vite.js build
 
 # 4) 部署（必须带 --secrets-file，否则 secrets 会被清空）
+#    推荐直接用脚本（= 构建 + 部署 + 双探针）：npm run deploy -- --secrets .secrets.json
 cd dist/ssr
 npx wrangler deploy --secrets-file ../../.secrets.json --name content-studio
 ```

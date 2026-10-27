@@ -50,11 +50,11 @@ node e2e/flow-check.mjs http://127.0.0.1:8901 test-token-123
 | 真实网页抓取成功率 | ⚠️ 仅测过 example.com（404 路径）。**真实站点（公众号/知乎/博客）未测**，预期动态渲染页会失败并走引导 |
 | 线上 D1（真实 Cloudflare D1） | ⚠️ 未验证。SQL 与 migration 已用 SQLite 验证语义，但 D1 的 `RETURNING` 支持、绑定行为需线上一验 |
 | 浏览器端 UI（复制/取消/流式渲染/移动端） | ⚠️ 未验证（需人工） |
-| `void deploy --provision` 首次建 D1 | ⚠️ 未验证（产品①当时未用 D1） |
+| `void deploy --provision` 首次建 D1 | ❌ 未采用：改走 `wrangler d1 create/execute` + `npm run deploy`（script 直连 wrangler），已线上验证 |
 | 长文压缩后笔记质量 | ⚠️ 结构通过，未评估「要点保真度」 |
 
 ## 未解决问题 / 下一步
-1. **部署（第 11 步之前）**：`void deploy --backend cloudflare --provision` + secrets；部署后**必查** `wrangler versions view <id>` 同时有 `env.ASSETS` 与 `env.DB`，并看日志 `assetUploadFileCount > 0`（产品① 1101 教训）。
+1. **部署**：`npm run deploy -- --secrets .secrets.json`（= 构建 → wrangler 部署 → 线上双探针）。旧的 `void deploy --backend/--platform` 本机不可用（需 `CLOUDFLARE_API_TOKEN`），两条路径的 D1 自动开通未验证；部署后仍要**人工复核** `wrangler versions view <id>` 同时有 `env.ASSETS` 与 `env.DB`，并看日志 `assetUploadFileCount > 0`（产品① 1101 教训）。
 2. **人工 E2E 清单（用户执行）**：见 `product2/docs/features/content-studio/内容工作台-交付文档.md` §4，重点 T1（真实链接）、T11（剪贴板）、T12（空输入禁用）、T16（刷新后历史仍在）。
 3. 可选改进（按性价比）：
    - 抓取质量：现在靠启发式；若要提升，可换 `HTMLRewriter`（Workers 原生）或针对主流站点加选择器规则

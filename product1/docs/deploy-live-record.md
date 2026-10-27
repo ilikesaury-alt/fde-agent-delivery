@@ -110,6 +110,15 @@ curl -X POST https://meeting-digest.ilikesaury.workers.dev/api/digest \
 
 ### ⚠️ 部署时务必带 --secrets-file
 
+推荐入口（脚本内已强制带 `--secrets-file` + 部署后双探针）：
+
+```bash
+cd product1
+npm run deploy -- --secrets <path-to-secrets>
+```
+
+等价的手工命令：
+
 ```bash
 cd product1
 npx vite build

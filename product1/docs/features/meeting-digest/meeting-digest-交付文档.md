@@ -90,7 +90,7 @@
 | T10 | 未填/错填令牌调用 | 401 `{"error":"未授权：缺少或错误的访问令牌。"}`；前端令牌门禁拦截 | 标准（新增） | ✅ 自动化 + 线上核验 |
 
 ### 自动化覆盖 vs 人工
-- **已自动化**（`product1/test/run.ts`，**29 项**，不 spawn 符合沙箱约束）：prompt 板块完整性、防臆造约束、空/空白输入、超长阈值、
+- **已自动化**（`product1/test/run.ts`，**47 项**，不 spawn 符合沙箱约束）：prompt 板块完整性、防臆造约束、空/空白输入、超长阈值、
   文件格式（含伪装后缀）、二进制检测、未配置凭据、上游 5xx/非 JSON/空 content 收敛、
   Authorization 头与 base 归一化、路由层状态码映射（401/400/413/502/503）、结构不完整重试一次、12 个路由层用例。
   运行：`cd product1 && node --experimental-strip-types test/run.ts`
@@ -125,8 +125,9 @@
 
 > **当前部署记录**：完整版见 CONTEXT.md「部署记录」；1101/focus-hang 复盘见 `product1/docs/e2e-evidence/focus-hang/`。
 
-- **部署**：构建 `node node_modules/vite/bin/vite.js build` → `cd dist/ssr && npx wrangler deploy --secrets-file <path>`
-  （**wrangler 直连**，本机只有 wrangler OAuth；`void deploy` 需要 `CLOUDFLARE_API_TOKEN`）
+- **部署**：`npm run deploy -- --secrets <path>`（= 构建 → `cd dist/ssr && npx wrangler deploy --secrets-file <path>` → 线上双探针）
+  （**wrangler 直连**，本机只有 wrangler OAuth；`void deploy` 需要 `CLOUDFLARE_API_TOKEN`，本机不可用）
+  > 脚本：`product1/scripts/deploy.mjs`。它强制带 `--secrets-file`（否则 secrets 会清空），并在部署后自动探活 `/api/health` 与首页；任一不通过就非 0 退出并给排查顺序。
 - **⚠️ 勿用** `wrangler deploy --config dist/ssr/wrangler.json` 且不验证资产：曾因此**跳过静态资产上传**（`assetUploadFileCount: 0`），本 Worker `run_worker_first: ["/**"]`，资产没绑对 → 每次请求读 `env.ASSETS` 抛异常 → **全站 Error 1101**
 - **部署后必查（铁律）**：
   - `wrangler versions view <version-id>` 确认静态资产绑定正确（8 个文件约 289KB）

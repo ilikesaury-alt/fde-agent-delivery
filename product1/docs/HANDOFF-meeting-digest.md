@@ -9,14 +9,14 @@
 ```bash
 cd H:\Work\Projects\Personal\fde-agent-delivery\product1
 node node_modules/typescript/bin/tsc --noEmit          # 类型检查
-node --experimental-strip-types test/run.ts            # 29 项测试
+node --experimental-strip-types test/run.ts            # 47 项测试
 node node_modules/vite/bin/vite.js build               # 构建
 node node_modules/vite/bin/vite.js dev --port 5210     # 本地起服（需无沙箱限制）
 ```
 Node 24：`C:\Users\lichun\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`
 
 ## 已验证（事实）
-- **测试 29/29 通过**（21 纯函数 + 8 Void 路由层）。
+- **测试 47/47 通过**（35 业务/路由 + 12 Markdown 渲染）。
 - `tsc --noEmit` **exit 0**。
 - `vite build` **成功**：SSR 85 modules + client 25 modules，235ms。
 - **`void --version` = 0.10.13 可运行**（CLI 本身不 spawn）。

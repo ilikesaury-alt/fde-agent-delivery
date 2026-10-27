@@ -12,6 +12,8 @@
 
 两个产品均已上线、验收标准全部达成（产品① 8/8，产品② T1–T16 全过），证据见各自 `productN/docs/e2e-evidence/`。
 
+> **首次阅读建议**：[作品集总览](./docs/作品集-总览.md) —— 交付方法论、能力↔证据对应、踩坑沉淀、已知边界（本文件只做索引）。
+
 ## 目录结构（文档按「产品自包含」约定归位）
 
 ```
@@ -60,8 +62,20 @@
 - **layout 必须返回 fragment**：返回 `<html>/<head>/<body>` 会导致 SSR 水合错位（产品① focus-hang 教训，15–31s 主线程阻塞）
 - **密钥仅存 Worker env**（Void `defineEnv` 声明）：前端零密钥、不进仓库；访问令牌保护可选
 - **错误文案全部面向用户**：自定义错误直接上屏，未知异常统一兜底，不泄露堆栈/上游响应体
-- **部署铁律**：`wrangler deploy --secrets-file` 直连（`void deploy` 需 API Token）；部署后必查 `versions view` 资产绑定（防 1101，`assetUploadFileCount > 0`）
+- **部署铁律**：`npm run deploy -- --secrets <path>`（脚本内 `wrangler deploy --secrets-file` 直连，`void deploy` 需 API Token）；部署后自动双探针 + 查 `versions view` 资产绑定（防 1101，`assetUploadFileCount > 0`）
 - **沙箱约束**：`vite dev` / workerd 不可 spawn → 本地验证用 Node shim（`e2e/server.mjs` 模式）；`npm install --ignore-scripts` + 平台包自带二进制
+
+## 工程质量与 CI
+
+| 护栏 | 命令 / 位置 |
+|---|---|
+| 类型检查 + 单测 + 构建（两产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
+| 构建产物校验（SSR bundle / client 资产 / 无明文凭据） | 同上 |
+| 文档引用校验（防断链） | `node .github/scripts/check-doc-links.mjs` |
+| dev server 真启动探活（advisory） | CI `dev-smoke` job（本地沙箱跑不了 workerd，故移入 CI） |
+| 部署后线上双探针 | `node productN/scripts/deploy.mjs` 内置 |
+
+> 当前仓库为本地 `master`、无 remote；配置 GitHub 远程后 CI 即自动生效。
 
 ---
 
@@ -85,7 +99,7 @@
 ```bash
 cd product1
 npm install --ignore-scripts     # 见下方「环境注意事项」
-npm test                         # 29 项测试
+npm test                         # 47 项测试
 npm run typecheck                # TS 类型检查
 npm run build                    # vite build
 ```
@@ -105,12 +119,12 @@ MAGPIE_MODEL=auto/hy3
 
 ### 部署
 ```bash
-cd product1 && node node_modules/vite/bin/vite.js build
-cd dist/ssr
-wrangler deploy --secrets-file <path-to-secrets.env>
+cd product1
+npm run deploy -- --secrets <path-to-secrets>
 ```
-> 首次部署必须用 `--secrets-file`（Worker 尚不存在时无法预先 `wrangler secret put`）。
-> 部署后必查资产绑定（防 1101），详见 `product1/docs/deploy-live-record.md`。
+> `npm run deploy` = 构建 → `wrangler deploy --secrets-file` → 线上双探针（`/api/health` + 首页）。
+> 首次部署必须带 `--secrets-file`（Worker 尚不存在时无法预先 `wrangler secret put`）；
+> 不带会清空 secrets，资产绑定缺失会导致 1101。详见 `product1/docs/deploy-live-record.md`。
 
 ### 验收标准（8/8 达成）
 | # | 标准 | 验证状态 |
@@ -135,6 +149,8 @@ wrangler deploy --secrets-file <path-to-secrets.env>
 
 贴一条文章链接（或粘贴文本）→ 三步流水线（抓取 → 素材准备 → 生成）→ 流式生成小红书图文笔记（主标题 + 2 备选 + 正文 + 话题标签）→ 结果落 D1 历史，可回看 / 删除 / 重新生成。
 
-- 本地端到端 33/33、线上 E2E T1–T16 全过（证据：`product2/docs/e2e-evidence/live/README.md`）
-- 快速开始 / 部署 / 测试指引见 `product2/docs/features/content-studio/内容工作台-交付文档.md`
+- 本地端到端 33/33、线上 E2E T1–T16 全过（证据：`product2/docs/e2e-evidence/live/README.md`）；单测 101 项
+- 快速开始：`cd product2 && npm install --ignore-scripts && npm test && npm run build`
+- 部署：`npm run deploy -- --secrets .secrets.json`
+- 测试 / 验收指引见 `product2/docs/features/content-studio/内容工作台-交付文档.md`
 - 部署记录（含 D1 建库链路）：`product2/docs/deploy-content-studio.md`
