@@ -390,7 +390,7 @@ cd product3
 npm run typecheck                               # exit 0
 npm test                                        # 通过 93 · 失败 0
 npm run build                                   # 成功，产物含 AI + VEC 绑定
-node e2e/flow-check.mjs http://127.0.0.1:8910    # 通过 32 · 失败 0
+npm run verify:local                            # 一条命令：E2E 32/32 + 评测达标，exit 0
 BASE_URL=http://127.0.0.1:8910 npm run eval      # 四项指标达标
 ego-browser nodejs < e2e/smoke-ui.mjs            # 通过 18 · 失败 0
 ```

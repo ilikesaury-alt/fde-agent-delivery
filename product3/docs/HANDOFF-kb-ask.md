@@ -40,14 +40,16 @@ npm run typecheck          # 期望 exit 0
 npm test                   # 期望 通过 93 · 失败 0
 npm run build              # 期望成功，且 dist/ssr/wrangler.json 含 ai 与 vectorize
 
-# 本地接口 E2E（两个终端）
-node e2e/fake-llm.mjs 3506                                    # 假上游模型
-MAGPIE_BASE_URL=http://127.0.0.1:3506/v1 MAGPIE_API_KEY=fake \
-  RETRIEVE_MIN_SCORE=0.05 node --import ./e2e/bootstrap.mjs e2e/server.mjs 8913
-node e2e/flow-check.mjs http://127.0.0.1:8913                  # 期望 通过 32 · 失败 0
+# 本地全量验证（一条命令：起假上游 + shim → E2E → 评测 → 自动清理）
+npm run verify:local                        # 期望 exit 0
+npm run verify:local:e2e                    # 只跑接口 E2E（跳过评测）
 
-# 评测（同一 shim 实例即可）
-BASE_URL=http://127.0.0.1:8913 npm run eval                    # 四项指标达标
+# 需要手工调试时（分开起，端口可自定义）
+node e2e/fake-llm.mjs 3510
+MAGPIE_BASE_URL=http://127.0.0.1:3510/v1 MAGPIE_API_KEY=fake \
+  RETRIEVE_MIN_SCORE=0.05 node --import ./e2e/bootstrap.mjs e2e/server.mjs 8920
+node e2e/flow-check.mjs http://127.0.0.1:8920
+BASE_URL=http://127.0.0.1:8920 npm run eval
 
 # 浏览器冒烟（需 ego-browser；注意脚本里的 BASE 端口要与 shim 一致）
 ego-browser nodejs < e2e/smoke-ui.mjs

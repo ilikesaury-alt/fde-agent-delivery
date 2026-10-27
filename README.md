@@ -168,6 +168,7 @@ npm run deploy -- --secrets <path-to-secrets>
 - 状态：**已实现，待线上部署**（需先建 D1 与 Vectorize 索引）
 - 需求与验收：`product3/CONTEXT.md`（§5 验收标准 / §8 交叉审查处置 / §9 验收证据）
 - 快速开始：`cd product3 && npm install --ignore-scripts && npm test && npm run build`
+- 本地全量验证：`npm run verify:local`（一键起假上游+shim、跑 E2E 与评测、自动清理）
 - 部署：`npm run deploy -- --secrets .secrets.json`（部署后必查 ASSETS/DB/AI/VEC 四个绑定）
 - 测试与验收指引：`product3/docs/features/kb-ask/kb-ask-交付文档.md`；技术交接：`product3/docs/HANDOFF-kb-ask.md`
 

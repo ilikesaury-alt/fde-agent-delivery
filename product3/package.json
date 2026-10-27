@@ -11,7 +11,9 @@
     "test": "node --experimental-strip-types test/run.ts",
     "deploy": "node scripts/deploy.mjs",
     "deploy:void": "void deploy --platform cloudflare --provision",
-    "eval": "node --experimental-strip-types eval/run.ts"
+    "eval": "node --experimental-strip-types eval/run.ts",
+    "verify:local": "node scripts/local-verify.mjs",
+    "verify:local:e2e": "node scripts/local-verify.mjs --e2e-only"
   },
   "dependencies": {
     "hono": "^4.13.13",
