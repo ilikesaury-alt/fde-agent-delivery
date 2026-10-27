@@ -10,3 +10,5 @@ miniflare-email-store/
 .env
 .env.local
 *.log
+.secrets.json
+.secrets.env

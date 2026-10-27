@@ -6,6 +6,23 @@ export default defineConfig({
     "compatibility_date": "2026-02-24"
   },
   /**
+   * Cloudflare 侧配置（权威源）。
+   * ⚠️ 不要手改 .void-wrangler.jsonc —— 那是本文件经 void migrate/deploy 生成的产物，
+   * 改了会在下次构建被覆盖（本次部署踩过：手改后 build 产出仍是 database_id: "local"）。
+   */
+  "cloudflare": {
+    "account_id": "e279d1f8bcb29c72945905179e57faeb",
+    "name": "content-studio",
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "content-studio-db",
+        "database_id": "b3955476-b504-4b67-8fe8-b1e9cf35cc75",
+        "migrations_dir": "db/migrations"
+      }
+    ]
+  },
+  /**
    * 站点级 head 默认值。
    * ⚠️ 不能写在 pages/layout.tsx 的 <head> 里：layout 必须返回 fragment，
    * 输出 <html>/<head>/<body> 会造成 SSR 水合错位 → focus-hang（产品①踩过）。
