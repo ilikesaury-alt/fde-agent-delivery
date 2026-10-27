@@ -9,8 +9,9 @@
 |---|------|----------|--------|
 | ① | **会议日报生成器**（meeting-digest） | https://meeting-digest.ilikesaury.workers.dev | 粘贴会议记录 → 一键生成固定 6 板块结构化日报 |
 | ② | **内容工作台**（content-studio） | https://content-studio.ilikesaury.workers.dev | 贴文章链接或粘贴素材 → 流式生成小红书图文笔记 + 历史/重新生成 |
+| ③ | **知识库问答**（kb-ask） | 待部署（需先建 D1 + Vectorize） | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
 
-两个产品均已上线、验收标准全部达成（产品① 8/8，产品② T1–T16 全过），证据见各自 `productN/docs/e2e-evidence/`。
+产品①② 已上线且验收全部达成（① 8/8、② T1–T16 全过）；产品③ 本地全链路验证完成（单测 93 / E2E 32 / 冒烟 18 / 评测达标），**待线上部署**。证据见各自 `productN/docs/e2e-evidence/` 与 `product3/CONTEXT.md` §9。
 
 > **首次阅读建议**：[作品集总览](./docs/作品集-总览.md) —— 交付方法论、能力↔证据对应、踩坑沉淀、已知边界（本文件只做索引）。
 
@@ -52,6 +53,8 @@
 | 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` |
 | 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` |
 | 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` |
+
+> 产品③（kb-ask）的文档在 `product3/` 内：`product3/CONTEXT.md`（需求/验收/证据）、`product3/docs/features/kb-ask/kb-ask-交付文档.md`、`product3/docs/HANDOFF-kb-ask.md`。
 
 跨产品文档：`docs/个人AI智能体交付技术框架与流程.md`（交付流程）、`docs/pi-skills-setup.md`（Skill 重建）。
 
@@ -154,3 +157,18 @@ npm run deploy -- --secrets <path-to-secrets>
 - 部署：`npm run deploy -- --secrets .secrets.json`
 - 测试 / 验收指引见 `product2/docs/features/content-studio/内容工作台-交付文档.md`
 - 部署记录（含 D1 建库链路）：`product2/docs/deploy-content-studio.md`
+
+---
+
+## 产品③ 知识库问答（kb-ask）
+
+把私有文档变成可问、答得有据可查的知识库：粘贴 / .md·.txt / PDF（浏览器端抽文本）/ 网页链接导入 → 自动切分与向量索引（Workers AI bge-m3 + Vectorize）→ 流式问答 + 引用溯源；依据不足时明确拒答而不编造。
+
+- 本地全绿：单测 **93**、接口 E2E **32/32**、浏览器冒烟 **18/18**、评测（Recall 100% / 拒答正确 100% / 引用准确 100%）
+- 状态：**已实现，待线上部署**（需先建 D1 与 Vectorize 索引）
+- 需求与验收：`product3/CONTEXT.md`（§5 验收标准 / §8 交叉审查处置 / §9 验收证据）
+- 快速开始：`cd product3 && npm install --ignore-scripts && npm test && npm run build`
+- 部署：`npm run deploy -- --secrets .secrets.json`（部署后必查 ASSETS/DB/AI/VEC 四个绑定）
+- 测试与验收指引：`product3/docs/features/kb-ask/kb-ask-交付文档.md`；技术交接：`product3/docs/HANDOFF-kb-ask.md`
+
+---

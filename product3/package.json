@@ -1,0 +1,34 @@
+{
+  "name": "kb-ask",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types test/run.ts",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:void": "void deploy --platform cloudflare --provision",
+    "eval": "node --experimental-strip-types eval/run.ts"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "linkedom": "^0.18.11",
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "void": "^1.2.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@void/react": "^1.2.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5"
+  }
+}

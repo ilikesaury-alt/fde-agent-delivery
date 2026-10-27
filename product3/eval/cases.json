@@ -1,0 +1,138 @@
+{
+  "_comment": "评测集：每个用例标注期望命中的文档与关键依据词。should_refuse=true 表示库内无依据、期望拒答。全部用例基于 eval/corpus/ 的示例语料（企业内网知识库手册），与产品①②无关。",
+  "cases": [
+    {
+      "id": "q01",
+      "question": "部署前需要准备哪几样东西？",
+      "expectDoc": "01-部署手册",
+      "expectKeyword": "服务凭据",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q02",
+      "question": "怎么确认部署是否真的正确？",
+      "expectDoc": "01-部署手册",
+      "expectKeyword": "绑定",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q03",
+      "question": "回滚的时候要注意什么？",
+      "expectDoc": "01-部署手册",
+      "expectKeyword": "已知可用版本",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q04",
+      "question": "回滚会把数据库一起恢复吗？",
+      "expectDoc": "01-部署手册",
+      "expectKeyword": "数据库",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q05",
+      "question": "常规修复多久发布一次？",
+      "expectDoc": "01-部署手册",
+      "expectKeyword": "每周",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q06",
+      "question": "模型调用是怎么计费的？",
+      "expectDoc": "02-计费与配额",
+      "expectKeyword": "token",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q07",
+      "question": "免费额度会累积到下个月吗？",
+      "expectDoc": "02-计费与配额",
+      "expectKeyword": "重置",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q08",
+      "question": "有哪些降低成本的建议？",
+      "expectDoc": "02-计费与配额",
+      "expectKeyword": "预筛",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q09",
+      "question": "预算用超了会有什么后果？",
+      "expectDoc": "02-计费与配额",
+      "expectKeyword": "告警",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q10",
+      "question": "令牌错误和没带令牌的返回有区别吗？",
+      "expectDoc": "03-权限与安全",
+      "expectKeyword": "未授权",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q11",
+      "question": "外部链接抓取要怎么防内网访问？",
+      "expectDoc": "03-权限与安全",
+      "expectKeyword": "内网",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q12",
+      "question": "删除文档时还要清理什么？",
+      "expectDoc": "03-权限与安全",
+      "expectKeyword": "向量",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q13",
+      "question": "提问后没有回答内容该怎么排查？",
+      "expectDoc": "04-故障处理",
+      "expectKeyword": "命中",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q14",
+      "question": "导入一直卡在索引中是什么原因？",
+      "expectDoc": "04-故障处理",
+      "expectKeyword": "分批",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q15",
+      "question": "聚焦输入框时页面卡住十几秒，先怀疑什么？",
+      "expectDoc": "04-故障处理",
+      "expectKeyword": "渲染",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q16",
+      "question": "公司年会的抽奖环节安排在几号？",
+      "expectDoc": null,
+      "expectKeyword": null,
+      "shouldRefuse": true
+    },
+    {
+      "id": "q17",
+      "question": "这款产品的创始人是谁？",
+      "expectDoc": null,
+      "expectKeyword": null,
+      "shouldRefuse": true
+    },
+    {
+      "id": "q18",
+      "question": "请解释量子色动力学中的渐近自由现象",
+      "expectDoc": null,
+      "expectKeyword": null,
+      "shouldRefuse": true
+    },
+    {
+      "id": "q19",
+      "question": "今年的法定节假日调休安排是怎样的？",
+      "expectDoc": null,
+      "expectKeyword": null,
+      "shouldRefuse": true
+    }
+  ]
+}
