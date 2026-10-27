@@ -51,8 +51,9 @@ tmp-*.log
 # 临时 CDP trace 产物（体积大、可重生成）
 **/trace.json
 
-# pi 运行时任务产物
+# pi 运行时产物（任务日志、子 agent 会话、预算等；非交付物）
 .pi/tasks/
+.pi/delegate/
 
 # pi 本地资源（含 junction 链接，git 无法表达语义；重建见 docs/pi-skills-setup.md）
 .pi/skills/
