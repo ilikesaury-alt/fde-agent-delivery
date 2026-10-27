@@ -21,11 +21,14 @@ function fmtTime(ms: number): string {
 
 export function HistoryPanel({
   token,
+  tokenReady = true,
   version,
   onReuse,
   onOpen,
 }: {
   token: string;
+  /** token 是否已从本地存储恢复；未恢复前不发请求（否则首帧会吃 401 并闪错误） */
+  tokenReady?: boolean;
   /** 每次生成成功后自增，触发重新拉列表 */
   version: number;
   onReuse: (job: GenerationJob) => void;
@@ -63,8 +66,9 @@ export function HistoryPanel({
   }, [authHeaders]);
 
   useEffect(() => {
+    if (!tokenReady) return;
     void load();
-  }, [load, version]);
+  }, [load, version, tokenReady]);
 
   const openDetail = async (id: string) => {
     if (expanded === id) {

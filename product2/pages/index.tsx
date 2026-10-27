@@ -28,6 +28,9 @@ function initialSteps(): Record<PipelineStep, StepState> {
 
 export default function WorkspacePage() {
   const [token, setToken] = useState("");
+  // token 从 localStorage 恢复是 useEffect 里做的，首帧恒为 ""；
+  // 若历史面板在此时发请求，会先吃一个 401 并在界面上闪一下错误。
+  const [tokenReady, setTokenReady] = useState(false);
   const [mode, setMode] = useState<Mode>("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
@@ -44,6 +47,7 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     setToken(window.localStorage.getItem("cs_token") || "");
+    setTokenReady(true);
   }, []);
 
   const canSubmit = !running && (mode === "url" ? url.trim().length > 4 : text.trim().length > 0);
@@ -278,6 +282,7 @@ export default function WorkspacePage() {
       {/* ---------- 历史 ---------- */}
       <HistoryPanel
         token={token}
+        tokenReady={tokenReady}
         version={historyVersion}
         onReuse={(job) => {
           // 生成中不接新的重生成，否则两条流的 token 会交错
