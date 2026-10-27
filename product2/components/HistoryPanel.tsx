@@ -25,6 +25,7 @@ export function HistoryPanel({
   version,
   onReuse,
   onOpen,
+  onAuthRequired,
 }: {
   token: string;
   /** token 是否已从本地存储恢复；未恢复前不发请求（否则首帧会吃 401 并闪错误） */
@@ -33,10 +34,13 @@ export function HistoryPanel({
   version: number;
   onReuse: (job: GenerationJob) => void;
   onOpen: (job: GenerationJob) => void;
+  /** 鉴权失败时通知父级：把用户引到顶部令牌输入框，而不是让他在历史区里查错 */
+  onAuthRequired?: () => void;
 }) {
   const [jobs, setJobs] = useState<SlimJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<GenerationJob | null>(null);
 
@@ -48,8 +52,18 @@ export function HistoryPanel({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setAuthRequired(false);
     try {
       const resp = await fetch("/api/jobs", { headers: authHeaders() });
+      if (resp.status === 401) {
+        // 401 不代表「历史功能坏了」，而是「没填/填错令牌」。
+        // 这里只标记状态，真正的提示交给父级在顶部输入框旁边显示——
+        // 否则用户会在历史区里找问题（实测自己被误导过去查 Cloudflare secret）。
+        setAuthRequired(true);
+        setJobs([]);
+        onAuthRequired?.();
+        return;
+      }
       if (!resp.ok) {
         const data = (await resp.json().catch(() => ({}))) as { error?: string };
         setError(data.error ?? "加载历史失败。");
@@ -154,6 +168,10 @@ export function HistoryPanel({
           <div className="sk-line w-2/3" />
           <div className="sk-line w-1/2" />
         </div>
+      ) : authRequired ? (
+        <p className="px-4 py-6 text-center text-xs text-[var(--color-ink-3)]">
+          需要访问令牌才能读取历史（见上方输入框）。
+        </p>
       ) : jobs.length === 0 ? (
         <p className="px-4 py-6 text-center text-xs text-[var(--color-ink-3)]">
           还没有记录。生成第一篇笔记后会自动保存在这里。

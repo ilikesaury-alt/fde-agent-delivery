@@ -44,10 +44,20 @@ export default function WorkspacePage() {
   const [lastSource, setLastSource] = useState<{ sourceType: Mode; url?: string; text?: string } | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const abortRef = useRef<{ cancelled: boolean; controller: AbortController } | null>(null);
+  /** 令牌输入框：鉴权失败时把用户引到这里，而不是让他在历史区里找问题 */
+  const tokenRef = useRef<HTMLInputElement | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
 
   useEffect(() => {
-    setToken(window.localStorage.getItem("cs_token") || "");
+    const stored = window.localStorage.getItem("cs_token") || "";
+    setToken(stored);
     setTokenReady(true);
+    // 首次访问且无令牌：直接把焦点放到输入框（凭据就填在这里，不该让用户自己找）
+    if (!stored) {
+      setAuthRequired(true);
+      // 等一帧再聚焦，避免 SSR 水合前 ref 还没挂上
+      setTimeout(() => tokenRef.current?.focus(), 50);
+    }
   }, []);
 
   const canSubmit = !running && (mode === "url" ? url.trim().length > 4 : text.trim().length > 0);
@@ -98,7 +108,16 @@ export default function WorkspacePage() {
             },
             onError: (payload) => {
               if (local.cancelled) return;
-              setError({ message: payload.message, hint: payload.hint });
+              // 401 不是「生成失败」，而是「没填/填错令牌」：引导到顶部输入框，且不把
+              // 「访问令牌缺失或错误」当成泛用错误文案（会在底部历史区产生误导）。
+              const msg = payload.message ?? "";
+              if (/令牌/.test(msg)) {
+                setAuthRequired(true);
+                tokenRef.current?.focus();
+                setError(null);
+                return;
+              }
+              setError({ message: msg, hint: payload.hint });
             },
           },
           { signal: local.controller.signal },
@@ -154,17 +173,32 @@ export default function WorkspacePage() {
             一条链接或一段素材 → 小红书图文笔记（标题 · 正文 · 话题标签）
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col items-end gap-1">
           <input
+            ref={tokenRef}
             type="password"
             value={token}
             onChange={(e) => {
-              setToken(e.target.value);
-              window.localStorage.setItem("cs_token", e.target.value);
+              // 粘贴常带首尾空格/换行，后端是等长比较：多一个字符就判错。
+              // 在入口处 trim，避免用户“明明是拷的却一直 401”。
+              const v = e.target.value.trim();
+              setToken(v);
+              window.localStorage.setItem("cs_token", v);
+              if (v) setAuthRequired(false);
             }}
-            placeholder="访问令牌（如已配置）"
-            className="w-44 rounded-md border border-[var(--color-line-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-ink)] placeholder:text-[var(--color-ink-3)]"
+            placeholder="访问令牌（必填）"
+            aria-invalid={authRequired}
+            className={`w-44 rounded-md border bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-ink)] placeholder:text-[var(--color-ink-3)] ${
+              authRequired
+                ? "border-[var(--color-err)] ring-2 ring-[var(--color-err)]/25"
+                : "border-[var(--color-line-strong)]"
+            }`}
           />
+          {authRequired && (
+            <p className="text-[11px] font-medium text-[var(--color-err)]">
+              请填写访问令牌（向部署者索取）
+            </p>
+          )}
         </div>
       </header>
 
@@ -284,6 +318,7 @@ export default function WorkspacePage() {
         token={token}
         tokenReady={tokenReady}
         version={historyVersion}
+        onAuthRequired={() => setAuthRequired(true)}
         onReuse={(job) => {
           // 生成中不接新的重生成，否则两条流的 token 会交错
           if (running) return;
