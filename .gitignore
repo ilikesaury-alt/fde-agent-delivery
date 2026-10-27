@@ -17,10 +17,13 @@ wrangler.toml.local
 .dev.vars
 .secrets.json
 
-# 本地工具目录
+# 本地工具目录（二进制如 cloudflared.exe 不入库，脚本与文档入库）
 md-tools/
 .workbuddy/
-tools/
+tools/*
+!tools/*.ps1
+!tools/*.bat
+!tools/*.md
 
 # 调研阶段克隆的第三方参考仓库（不属于本产品交付物，避免混入历史）
 research/
