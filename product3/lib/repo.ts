@@ -254,14 +254,24 @@ const DOC_SLIM_COLUMNS =
   "id, source, source_ref, title, status, chunk_count, error, created_at, content_hash, indexed_at";
 
 /**
- * 多值 INSERT 分批写入：D1 单语句参数有上限，逐行 INSERT 又会把一次导入变成
- * 几百次往返。100 行/句 = 300 个占位符，是这两者之间的折中。
+ * ⚠️ D1 单条 SQL 的**绑定变量上限是 100**（本地 node:sqlite / SQLite 默认是 32766）。
+ *
+ * 这就是「本地全绿、线上 502」的来源：按「行数」分批是错的，必须按**变量个数**分批。
+ * 实测（2026-10-28 线上）：`insert or replace … values (?,?,?) × 100 行` = 300 变量 →
+ * `too many SQL variables at offset 330: SQLITE_ERROR [code: 7500]` → 导入整体 502。
+ * 因此这里统一按变量数切批，任何多值语句都不得超过这个上限。
+ */
+export const D1_MAX_SQL_PARAMS = 100;
+
+/**
+ * 多值 INSERT 分批写入：按「变量数」切批（每行 3 个变量 → 每句最多 33 行）。
  */
 async function insertTermRows(
   db: D1Like,
   rows: Array<{ term: string; chunkId: string; tf: number }>,
-  rowsPerStmt = 100,
+  paramsPerRow = 3,
 ): Promise<void> {
+  const rowsPerStmt = Math.max(1, Math.floor(D1_MAX_SQL_PARAMS / paramsPerRow));
   for (let i = 0; i < rows.length; i += rowsPerStmt) {
     const slice = rows.slice(i, i + rowsPerStmt);
     const values = slice.map(() => "(?, ?, ?)").join(", ");
@@ -271,7 +281,8 @@ async function insertTermRows(
 }
 
 /** 删除 chunk 时同步清倒排（否则关键词通道会召回已删文档的孤儿片段） */
-async function deleteTermsByChunkIds(db: D1Like, ids: string[], perStmt = 100): Promise<void> {
+async function deleteTermsByChunkIds(db: D1Like, ids: string[]): Promise<void> {
+  const perStmt = D1_MAX_SQL_PARAMS; // 每行 1 个变量
   for (let i = 0; i < ids.length; i += perStmt) {
     const slice = ids.slice(i, i + perStmt);
     const holes = slice.map(() => "?").join(", ");
@@ -403,9 +414,15 @@ export function createD1Repo(db: D1Like): Repo {
 
     async getChunksByIds(ids) {
       if (!ids.length) return [];
-      const holes = ids.map(() => "?").join(", ");
-      const res = await db.prepare(`SELECT * FROM chunks WHERE id IN (${holes})`).bind(...ids).all<ChunkRow>();
-      const map = new Map((res.results ?? []).map((r) => [r.id, rowToChunk(r)]));
+      // 按变量数切批（D1 上限 100，见 D1_MAX_SQL_PARAMS 注释）
+      const map = new Map<string, Chunk>();
+      const perStmt = D1_MAX_SQL_PARAMS;
+      for (let i = 0; i < ids.length; i += perStmt) {
+        const slice = ids.slice(i, i + perStmt);
+        const holes = slice.map(() => "?").join(", ");
+        const res = await db.prepare(`SELECT * FROM chunks WHERE id IN (${holes})`).bind(...slice).all<ChunkRow>();
+        for (const r of res.results ?? []) map.set(r.id, rowToChunk(r));
+      }
       // 保持传入顺序（调用方按相似度排好序，重排会破坏引用编号）
       return ids.map((id) => map.get(id)).filter((c): c is Chunk => Boolean(c));
     },

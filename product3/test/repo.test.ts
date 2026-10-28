@@ -9,7 +9,7 @@
 
 import { assert, assertEqual, describe, it } from "./harness.ts";
 import { createD1Shim } from "../e2e/d1-shim.mjs";
-import { createD1Repo, type Repo } from "../lib/repo.ts";
+import { D1_MAX_SQL_PARAMS, createD1Repo, type Repo } from "../lib/repo.ts";
 import { createMemoryRepo } from "../lib/memory.ts";
 import type { Chunk, ConversationMessage } from "../lib/types.ts";
 
@@ -119,7 +119,34 @@ for (const factory of factories) {
     });
   });
 
-  describe(`repo(${factory.name}) — 关键词倒排`, () => {
+  describe(`repo(${factory.name}) — D1 绑定变量上限（线上 100，本地 sqlite 32766）`, () => {
+  it("批量写倒排时单句变量数不超过 100（否则线上 7500 too many SQL variables）", async () => {
+    const repo = factory.make();
+    await repo.insertDocument({
+      id: "doc_limit",
+      source: "paste",
+      sourceRef: null,
+      title: "上限",
+      contentHash: "hash_limit",
+      createdAt: now,
+    });
+    // 120 行 × 3 变量 = 360 变量（一次写完必然超限）
+    const rows = Array.from({ length: 120 }, (_, i) => ({ term: `t${i}`, chunkId: `doc_limit:${i}`, tf: 1 }));
+    await repo.insertChunkTerms(rows);
+    // searchTerms 会 JOIN chunks（倒排行必须对应真实 chunk 才查得到），所以先建 chunk
+    await repo.insertChunks(
+      rows.map((r, i) => chunk(r.chunkId, "doc_limit", i, `片段 ${i} 包含 ${r.term}`)),
+    );
+    const found = await repo.searchTerms(["t7", "t119"]);
+    assertEqual(found.length, 2, "两批都应写入成功");
+  });
+
+  it("D1_MAX_SQL_PARAMS 就是线上真实上限（写死 100，不是本地 sqlite 的默认值）", () => {
+    assertEqual(D1_MAX_SQL_PARAMS, 100);
+  });
+});
+
+describe(`repo(${factory.name}) — 关键词倒排`, () => {
     async function seedDoc(repo: Repo, docId: string, status: "ready" | "failed" = "ready") {
       await repo.insertDocument({
         id: docId,

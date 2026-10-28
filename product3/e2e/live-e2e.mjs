@@ -68,7 +68,8 @@ const call = (path, init = {}) =>
  *    做法：页面内发起 fetch 并把结果挂到 window，再用短 evaluate 轮询取回。
  */
 let askSeq = 0;
-const ask = async (question) => {
+/** @param {string} question @param {string|null} conversationId */
+const ask = async (question, conversationId = null) => {
   const key = "__kbAsk" + ++askSeq;
   await page.evaluate(
     (a) => {
@@ -76,7 +77,7 @@ const ask = async (question) => {
       fetch(a.base + "/api/ask", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: "Bearer " + a.token },
-        body: JSON.stringify({ question: a.question }),
+        body: JSON.stringify(a.conversationId ? { question: a.question, conversationId: a.conversationId } : { question: a.question }),
       })
         .then((r) => r.text())
         .then((t) => {
@@ -86,7 +87,7 @@ const ask = async (question) => {
           window[a.key] = { done: true, text: null, error: String(e) };
         });
     },
-    { key, base: BASE, token: TOKEN, question },
+    { key, base: BASE, token: TOKEN, question, conversationId },
   );
 
   const deadline = Date.now() + 120_000;
@@ -213,6 +214,121 @@ if (docId) {
   check("⑨ 空文本 → 400", a.status === 400, `status=${a.status}`);
   check("⑨ SSRF 尾点地址被拒 → 400", b.status === 400, `status=${b.status} ${String(b.body?.error).slice(0, 40)}`);
   check("⑨ 删除不存在 → 404", c.status === 404, `status=${c.status}`);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 二期用例（2026-10-28）：多轮会话 / 混合检索 / 索引探针 / OCR
+// ════════════════════════════════════════════════════════════════
+
+// ── ⑩ 多轮会话：首问自动建会话 ───────────────────────────────────
+let convId = null;
+{
+  const r = await ask("回滚前要确认什么？");
+  const done = r.events.find((e) => e.event === "done");
+  convId = done?.data?.conversationId ?? null;
+  check("⑩ 首问自动建会话并返回 conversationId", Boolean(convId), `conversationId=${convId}`);
+  check("⑩ 首问落库（persisted=true）", done?.data?.persisted === true, `persisted=${done?.data?.persisted}`);
+  check("⑩ 检索步骤 detail 含两路召回数", /向量 \d+ 段|关键词 \d+ 段/.test(String(r.events.find((e) => e.event === "step" && e.data?.step === "retrieve" && e.data?.status === "done")?.data?.detail ?? "")), String(r.events.find((e) => e.event === "step" && e.data?.step === "retrieve" && e.data?.status === "done")?.data?.detail ?? ""));
+}
+
+// ── ⑪ 多轮会话：追问被规则改写 ───────────────────────────────────
+{
+  const r = await ask("它呢？", convId);
+  const done = r.events.find((e) => e.event === "done");
+  const result = done?.data?.result;
+  check("⑪ 追问复用同一会话", done?.data?.conversationId === convId, `conversationId=${done?.data?.conversationId}`);
+  check("⑪ 指代式追问被规则改写", result?.rewritten === true, `rewritten=${result?.rewritten} query=${String(result?.retrievalQuery).slice(0, 60)}`);
+  check("⑪ 改写后的查询带上一轮主题", String(result?.retrievalQuery ?? "").includes("回滚"), `query=${String(result?.retrievalQuery).slice(0, 80)}`);
+}
+
+// ── ⑫ 会话接口：列表 / 详情 / 401 ────────────────────────────────
+{
+  const list = await call("/api/conversations");
+  const conv = (list.body?.conversations ?? []).find((c) => c.id === convId);
+  check("⑫ GET /api/conversations → 200 且含本次会话", list.status === 200 && Boolean(conv), `status=${list.status} count=${list.body?.conversations?.length} turnCount=${conv?.turnCount}`);
+  check("⑫ 会话轮数 ≥ 2", (conv?.turnCount ?? 0) >= 2, `turnCount=${conv?.turnCount}`);
+
+  const detail = await call(`/api/conversations?id=${encodeURIComponent(convId)}`);
+  check("⑫ GET /api/conversations?id= → 200 且带消息", detail.status === 200 && (detail.body?.messages?.length ?? 0) >= 2, `status=${detail.status} messages=${detail.body?.messages?.length}`);
+
+  const ghost = await call("/api/conversations?id=conv_nope");
+  check("⑫ 不存在的会话 → 404", ghost.status === 404, `status=${ghost.status}`);
+
+  const noAuth = await page.evaluate(async (base) => {
+    const res = await fetch(base + "/api/conversations", { headers: { "content-type": "application/json" } });
+    return { status: res.status };
+  }, BASE);
+  check("⑫ 新接口无令牌 → 401", noAuth.status === 401, `status=${noAuth.status}`);
+}
+
+// ── ⑬ 混合检索：错误码类查询（关键词通道）─────────────────────────
+{
+  const DOC_ERR = `# 线上E2E-错误码
+
+## 常见错误码
+
+报错 ERR_9911 表示向量索引维度不匹配，必须重建索引。
+
+报错 ERR_9912 表示日配额耗尽，等次日恢复。`;
+  const imported = await call("/api/documents", { method: "POST", body: JSON.stringify({ source: "paste", text: DOC_ERR, title: "线上E2E-错误码" }) });
+  check("⑬ 导入含错误码的文档 → 201", imported.status === 201, `status=${imported.status} ${String(imported.body?.error).slice(0, 40)}`);
+
+  // 等待索引追上（Vectorize 异步）
+  let detail = "";
+  const deadline = Date.now() + 150_000;
+  while (Date.now() < deadline) {
+    const r = await ask("ERR_9911 是什么错误？");
+    detail = String(r.events.find((e) => e.event === "step" && e.data?.step === "retrieve" && e.data?.status === "done")?.data?.detail ?? "");
+    if (/关键词 \d+ 段/.test(detail) && /关键词 [1-9]/.test(detail)) break;
+    await new Promise((res) => setTimeout(res, 10_000));
+  }
+  check("⑬ 关键词通道有召回（错误码类查询）", /关键词 [1-9]/.test(detail), detail);
+}
+
+// ── ⑭ 索引可见性探针 ─────────────────────────────────────────────
+{
+  const list = await call("/api/documents");
+  const doc = (list.body?.documents ?? []).find((d) => (d.chunkCount ?? 0) > 0);
+  const probed = await call("/api/probe", { method: "POST", body: JSON.stringify({ id: doc?.id }) });
+  check("⑭ POST /api/probe → 200", probed.status === 200, `status=${probed.status}`);
+  check("⑭ 探针给出 searchable 布尔结论", typeof probed.body?.searchable === "boolean", `searchable=${probed.body?.searchable} checked=${probed.body?.checked}`);
+
+  const missing = await call("/api/probe", { method: "POST", body: JSON.stringify({ id: "doc_nope" }) });
+  check("⑭ 探测不存在的文档 → 404", missing.status === 404, `status=${missing.status}`);
+}
+
+// ── ⑮ OCR 接口契约（只验契约与错误路径，真识别见手动用例）─────────
+{
+  const remote = await call("/api/ocr", { method: "POST", body: JSON.stringify({ image: "https://example.com/a.jpg", page: 1 }) });
+  check("⑮ OCR 只收 data URL（远程 URL → 400）", remote.status === 400, `status=${remote.status}`);
+
+  const badPage = await call("/api/ocr", { method: "POST", body: JSON.stringify({ image: "data:image/jpeg;base64,AAAA", page: 9 }) });
+  check("⑮ 页号超上限 → 400", badPage.status === 400, `status=${badPage.status}`);
+
+  // 真模型识别一张 1x1 像素图：结果内容不可预测，但契约（200/400/429/502 之一 + 结构）必须成立
+  const tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const ocr = await call("/api/ocr", { method: "POST", body: JSON.stringify({ image: tiny, page: 1 }) });
+  const ocrOk = ocr.status === 200 && typeof ocr.body?.text === "string";
+  check("⑮ OCR 契约成立（200+text 或明确错误码）", ocrOk || [400, 429, 502].includes(ocr.status), `status=${ocr.status} text=${String(ocr.body?.text).slice(0, 40)} error=${String(ocr.body?.error).slice(0, 40)}`);
+}
+
+// ── ⑯ 历史改读 messages（新真源）─────────────────────────────────
+{
+  const r = await call("/api/history");
+  check("⑯ /api/history → 200 且有条目", r.status === 200 && (r.body?.records?.length ?? 0) >= 1, `status=${r.status} count=${r.body?.records?.length}`);
+  const legacy = await call("/api/history?includeLegacy=1");
+  check("⑯ ?includeLegacy=1 兼容读一期数据", legacy.status === 200 && legacy.body?.legacyIncluded === true, `status=${legacy.status} count=${legacy.body?.records?.length}`);
+}
+
+// ── ⑰ 清理：删掉本次导入的文档（避免污染知识库）───────────────────
+{
+  const list = await call("/api/documents");
+  const mine = (list.body?.documents ?? []).filter((d) => String(d.title ?? "").startsWith("线上E2E-"));
+  for (const d of mine) {
+    await call(`/api/documents?id=${encodeURIComponent(d.id)}`, { method: "DELETE" });
+  }
+  const after = await call("/api/documents");
+  check("⑰ 清理测试文档完成", (after.body?.documents ?? []).filter((d) => String(d.title ?? "").startsWith("线上E2E-")).length === 0, `剩余=${(after.body?.documents ?? []).filter((d) => String(d.title ?? "").startsWith("线上E2E-")).length}`);
 }
 
 const passed = results.filter((r) => r.ok).length;
