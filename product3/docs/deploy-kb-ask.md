@@ -1,6 +1,8 @@
 # kb-ask 部署记录（2026-10-28）
 
-> 产品③ 首次线上部署。**部署成功、云端资源与绑定已逐项核验**；运行时 E2E 因沙箱网络策略无法执行（见 §5）。
+> 产品③ 首次线上部署 + **二期部署（2026-10-28 晚）**。首次部署：云端资源与绑定已逐项核验。
+> 二期部署见 §6（新增：0004 迁移、三个新接口、一次只在真环境暴露的 D1 缺陷）。
+> 线上运行时 E2E 通过 ego-browser 浏览器通道执行（沙箱 Node/curl 出网被限，直连 workers.dev 超时）。
 > 需求与验收见 [`product3/CONTEXT.md`](../CONTEXT.md)；交付文档见 [`product3/docs/features/kb-ask/kb-ask-交付文档.md`](./features/kb-ask/kb-ask-交付文档.md)。
 
 ## 1. 线上信息
@@ -181,3 +183,84 @@ npx wrangler rollback <完整 version-id> --name kb-ask --message "原因" -y
 ```
 
 ⚠️ 回滚 Worker **不会**回滚 D1 数据与 Vectorize 索引。若曾改索引维度，回滚后旧代码会用错维度读新索引 → 检索报错，需重建索引并重新导入。
+
+
+---
+
+## 6. 二期部署（2026-10-28，`7591dab` + `0a4f08e`）
+
+| 项 | 值 |
+|---|---|
+| 二期版本 | `7591dab`（功能）→ `0a4f08e`（D1 上限修复）→ `6eb0b19a`（含密钥更新，线上最终版本） |
+| Worker | `kb-ask` · https://kb-ask.ilikesaury.workers.dev |
+| 新增迁移 | `0004_conversations_hybrid.sql`（`conversations` / `messages` / `chunk_terms`） |
+| 新增接口 | `GET·DELETE /api/conversations`、`POST /api/ocr`、`POST /api/probe`；`POST /api/ask` 新增可选 `conversationId` |
+| 线上 E2E | **35/35 通过**（`e2e/live-e2e.mjs`，含二期 17 项） |
+
+### 6.1 部署步骤（实际执行）
+
+```bash
+cd product3
+
+# ① 先迁移（**必须在部署前**，否则新接口 500）
+cd dist/ssr && npx wrangler d1 migrations apply DB --remote && cd ../..
+
+# ② 构建 + 部署（脚本 = 构建 → wrangler deploy --secrets-file → 双探针）
+npm run deploy -- --secrets .secrets.json
+```
+
+> ⚠️ `wrangler d1 migrations apply` 必须在 **`dist/ssr/` 目录**执行：根目录没有 wrangler 配置文件
+> （`migrations_dir` 是构建产物里的 `../../db/migrations`）。或用 `--config dist/ssr/wrangler.json`。
+
+### 6.2 部署中发现的两个真环境问题（本地全绿，线上才暴露）
+
+**① `0003` 迁移不在台账 → `migrations apply` 报 `duplicate column name: indexed_at`**
+
+- 首次部署时 `0003` 是用 `wrangler d1 execute --file` **手工**应用的，没进 `d1_migrations` 台账。
+- 于是 `migrations apply` 认为 0003 未执行 → 重新跑 `ALTER TABLE ... ADD COLUMN indexed_at` → 报错中断。
+- 处置：查 `d1_migrations` 表 → 手工补记 `0003_indexed_at.sql` → 再 apply（0004 正常应用）。
+- **教训**：迁移一律走 `migrations apply`，不要用 `execute --file`（否则台账与实际不一致，下次必炸）。
+
+**② D1 单条 SQL 的绑定变量上限是 100（本地 sqlite 是 32766）**
+
+- 二期倒排批量写按「行数」切批（100 行/句 = 300 变量）→ 线上 `too many SQL variables at offset 330: SQLITE_ERROR [code: 7500]`
+  → 导入接口 502「索引写入失败」。
+- 本地 `node:sqlite` 上限宽 328 倍，**本地 204 条单测全绿也测不到**（与一期那 4 个运行期缺陷同源）。
+- 处置：抽出 `D1_MAX_SQL_PARAMS = 100`，所有多值语句按**变量数**切批；补回归用例。
+  修复版本 `0a4f08e`，部署后导入恢复 201。
+
+### 6.3 顺带处置：共享 LLM 网关隧道失效（影响三个产品，非本产品缺陷）
+
+- 现象：线上 `/api/ask` 报「AI 服务暂不可用」，而 `/api/documents` 正常 —— 生成链路挂、其它正常。
+- 定位：`tools/tunnel.log` 显示 `Unauthorized: Tunnel not found`（快速隧道被服务端回收，**10:10 起**失效），
+  本地 magpie（:3425）仍活着，但公网域名已不可达。
+- 处置：重启 `cloudflared` 得新域名 `strange-healing-manuals-ada.trycloudflare.com` →
+  更新三个产品的 `MAGPIE_BASE_URL` secret 并各自重新部署。
+  - `kb-ask` → `6eb0b19a`；`content-studio` → `8ffe6eae`（已核验 health 200 / 带令牌 200 / 无令牌 401）
+  - `meeting-digest` → secret 变更版本 `7199a927`（已核验 health 200 / 首页无 1101）
+- **注意**：product1 没有本地 `.secrets.json`，其 secret 只能靠线上变更（已改）；后续换域名仍需逐个
+  `wrangler secret put`。根治办法是换**命名隧道**（固定域名），登记在 `docs/线上环境速查.md` §4 的 R3。
+
+### 6.4 二期部署核验（写死，缺一步不算成功）
+
+| 核验项 | 实际结果 | 结论 |
+|---|---|---|
+| `0004` 迁移 | `conversations` / `messages` / `chunk_terms` 三表 + `idx_conversations_updated` / `idx_messages_conv` / `idx_messages_created` / `idx_terms_chunk` 四索引 | ✅ |
+| 迁移台账 | `d1_migrations` 4/4（0001–0004） | ✅ |
+| 四绑定 | `versions view` → env.DB / env.VEC / env.AI / env.ASSETS | ✅ |
+| secrets | MAGPIE_BASE_URL / MAGPIE_API_KEY / MAGPIE_MODEL / ACCESS_TOKEN 均 `(hidden)` | ✅ |
+| 线上 `/api/health` | `{"ok":true,"service":"kb-ask"}` | ✅ |
+| 线上首页 | 正常渲染（无 1101 特征） | ✅ |
+| 无令牌访问 | `/api/documents` 401；`/api/conversations` 401 | ✅ |
+| 线上接口 E2E | **35/35 通过**（含二期 17 项：会话、追问改写、倒排召回、探针、OCR 契约、历史兼容） | ✅ |
+| 浏览器人工用例 | 待跑（见交付文档 §8.2 的 M1–M5） | ⏳ |
+
+### 6.5 二期线上仍待人工验证（本地无法闭环）
+
+| # | 项 | 说明 |
+|---|---|---|
+| M1 | 真模型下的多轮改写收益 | 线上已验证「追问被改写」（`rewritten=true`，查询含上一轮主题）；**回答质量**是否因此变好仍需人工看 |
+| M2 | 扫描件中文 OCR 质量 | 线上 OCR 契约成立（400/200/429/502 路径），但 1×1 像素图识别为空（`该页未识别出文字`）—— **真实中文扫描件必须人工上传验证** |
+| M3 | 探针在真 Vectorize 延迟下的表现 | 线上 `searchable=false`（刚导入还没进索引），符合预期；「等多久变 true」需按经验值确认 |
+| M4 | 关键词通道在真 bge-m3 下的收益 | 线上已看到「关键词 1 段」召回（错误码文档）；**Recall 提升幅度**要跑线上 eval 才有数 |
+| M5 | 阈值标定 | `RETRIEVE_MIN_SCORE` 现值 0.45 未标定；线上 eval 跑一遍再定 |

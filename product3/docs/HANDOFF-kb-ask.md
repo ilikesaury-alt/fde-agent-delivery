@@ -1,7 +1,7 @@
 # HANDOFF · kb-ask（产品③ 企业知识库问答）
 
 > **面向**：接手这个功能的下一个开发会话（冷启动入口）。回答「从哪接着干」，不重复讲实现细节。
-> **当前 revision**：`0548497` + 工作区**未提交改动**（二期全部代码与文档，见 `git status`）。线上仍是 v1 版本 `74ca217b`，**二期尚未部署**。
+> **当前 revision**：`0a4f08e`（工作区干净）。**二期已上线**：线上版本 `6eb0b19a`，线上接口 E2E **35/35 通过**。
 > **需求与验收**：[`product3/CONTEXT.md`](../CONTEXT.md)（§10–§12 是二期口径与证据，§1–§9 是一期）
 > **交付文档**：[`product3/docs/features/kb-ask/kb-ask-交付文档.md`](./features/kb-ask/kb-ask-交付文档.md)（§7 起为二期）
 > **工作原理**：[`product3/docs/features/kb-ask/kb-ask-工作原理.md`](./features/kb-ask/kb-ask-工作原理.md)（§10 为二期）
@@ -10,15 +10,15 @@
 
 ## 1. 一句话现状
 
-一期已上线且线上 E2E 通过（真 bge-m3 + 真 Vectorize + 真 magpie，version `74ca217b`）。
-二期（多轮对话 / 会话侧栏 / 混合检索 / 扫描件 OCR / 索引延迟提示）**本地全绿、未部署**：
+一期已上线（version `74ca217b`）。二期（多轮对话 / 会话侧栏 / 混合检索 / 扫描件 OCR / 索引延迟提示）
+**已上线**（version `6eb0b19a`，线上 E2E 35/35）：
 
 - `npm run typecheck` 0 error · `npm test` **199 通过 0 失败**
 - `npm run build` 成功（产物仍含 `ai` / `vectorize` / `d1_databases`）
 - `npm run verify:local` 通过：接口 E2E **63/63** + 评测达标（21 例，Recall 100% / 拒答 100% / 误拒 17.6% / 引用准确 100%，评测跑在独立 shim 上）
 - 浏览器冒烟 **33/33**（`product3/docs/e2e-evidence/ui-smoke.log`）
 
-⚠️ **部署前必须先应用 `0004` 迁移**，否则会话/倒排表不存在、新接口 500。
+⚠️ 已应用 `0004` 迁移（线上 `d1_migrations` 4/4）。
 
 ## 2. 关键文件地图（二期新增/改造标 ★）
 
@@ -71,8 +71,8 @@ ego-browser nodejs < e2e/smoke-ui.mjs
 
 ## 4. 未解决问题（按优先级）
 
-1. **部署 + 迁移**：先 `npx wrangler d1 migrations apply kb-ask-db --remote`，再 `npm run deploy`；部署后核验四绑定 + 新接口（详见交付文档 §10）。
-2. **阈值仍未用真模型标定**（一期遗留 D16）：`RETRIEVE_MIN_SCORE` 现值 0.45 是线上真模型下的估值，二期新增的**关键词通道参数**（罕见词比例、RRF 权重、code 加权）同样只在假嵌入下验证过 —— 上线后必须用 `npm run eval` 在真环境重跑并按 §12.1 表格对账。
+1. ~~部署 + 迁移~~ → **已完成**（2026-10-28 晚，version `6eb0b19a`，线上 E2E 35/35）：见 [deploy-kb-ask.md](./deploy-kb-ask.md) §6。剩余：交付文档 §8.2 的 M1–M5 人工用例（真扫描件 OCR 质量、线上 eval 标定、探针延迟表现）。
+2. **阈值仍未用真模型标定**（一期遗留 D16，线上同样未做）：`RETRIEVE_MIN_SCORE` 现值 0.45 是线上真模型下的估值，二期新增的**关键词通道参数**（罕见词比例、RRF 权重、code 加权）同样只在假嵌入下验证过 —— 上线后必须用 `npm run eval` 在真环境重跑并按 §12.1 表格对账。
 3. **OCR 中文质量未验证**：本地只有假模型；真实 moondream 对中文扫描件的识别质量必须线上实测（交付文档 M2）。质量不达标时用 `OCR_MODEL` 换模型，代码不用改。
 4. **会话无用户隔离**：仍是单用户令牌；`ACCESS_TOKEN` 未配置即对公网开放（一期遗留，本产品数据更敏感）。
 5. **手动跑 `npm run eval` 仍会污染目标库**：它会把 4 篇示例文档写进目标库（`verify:local` 已改为给评测起独立 shim，自动流程不受影响；手工打线上时跑完要删）。
@@ -86,9 +86,18 @@ ego-browser nodejs < e2e/smoke-ui.mjs
 4. **flow-check 会污染 eval 指标**：同一 shim 里先跑接口 E2E 再跑评测，指标会从 100% 掉到 92.9%；`local-verify.mjs` 现在给评测单独起一个 shim。
 5. **`cargo`-式教训：参数要由评测驱动，不要拍脑袋**：本轮混合检索改了 5 轮（等权 RRF → 加权 → code-like 加权 → 罕见词入池 → 影响力闸门），每一版都用 21 例 eval + 消融对比验，才没把 q06 的 Recall 打下去。
 
+### 4.1 部署期踩到的坑（下次别再踩）
+
+1. **`wrangler d1 migrations apply` 要在 `dist/ssr/` 目录跑**（根目录无 wrangler 配置；`migrations_dir` 是构建产物里的 `../../db/migrations`）。
+2. **迁移一律走 `migrations apply`，别用 `d1 execute --file`**：后者不进 `d1_migrations` 台账，下次 apply 会重复执行并炸（`0003` 就是这么炸的：`duplicate column name: indexed_at`）。台账补记：`insert into d1_migrations (name) values ('0003_indexed_at.sql')`。
+3. **D1 单条 SQL 绑定变量上限 = 100**（本地 sqlite 32766）：多值语句必须按**变量数**切批，否则线上 `too many SQL variables` → 导入 502。已固化在 `lib/repo.ts` 的 `D1_MAX_SQL_PARAMS`。
+4. **共享 LLM 隧道会突然失效**（`Unauthorized: Tunnel not found`）：症状是「生成类接口报服务不可用，其它正常」。查 `tools/tunnel.log`；换域名后要同步三处（两个 `.secrets.json` + 每个 Worker 的 secret + 重新部署）。
+5. **沙箱 Node/curl 直连 workers.dev 超时**（出网被限），但 ego-browser 通道与 wrangler API 都可用 —— 线上验证走这两条。
+
 ## 5. 猜测 vs 已验证（明确分开）
 
 **已验证（有证据，可复现）**：
+- 二期线上：版本 `6eb0b19a`，`e2e/live-e2e.mjs` **35/35**（含会话自动创建、追问改写 `rewritten=true`、关键词通道召回、探针、OCR 契约、历史兼容读）；迁移台账 4/4；三产品 health 均 200
 - 混合检索在 21 例评测上带来可测收益：关闭 Recall 85.7% → 开启 100%，拒答正确率/误拒率不变（CONTEXT §12.1）。
 - 追问改写生效且可观测：flow-check §8 断言 `rewritten=true` 且改写后的查询含上一轮问题；单测覆盖 `CONTEXT_REWRITE=0` 关闭路径。
 - 倒排与 chunk 生命周期一致：删除文档时 `chunk_terms` 一并清理（`d1-shim` 真 SQL 单测 + 路由删除断言）。
@@ -97,7 +106,7 @@ ego-browser nodejs < e2e/smoke-ui.mjs
 - 浏览器接线：会话侧栏、追问标注、徽标翻转、取消回正、复制反馈复原（32/32 断言）。
 
 **未验证（属推测，动它前先证伪）**：
-- **真 Vectorize 的可见性延迟在二期探针下的表现**：本地内存向量即时可见，线上可能首次探测即「暂时检索不到」——这是预期，不是 bug；但**探测失败率**没有线上数据。
+- **真 Vectorize 的可见性延迟在二期探针下的表现**：线上实测 `searchable=false`（刚导入尚未进索引），与预期一致；但**探测命中率与等待时长的分布**没有线上数据（只跑了少量样本）。
 - **真模型对 `chunk_terms` 体积/写入耗时的影响**：每 chunk ≤24 term 的估算基于本地；线上导入总耗时是否仍在 60s 目标内未测。
 - **OCR 视觉模型的真实返回形状**：`extractOcrText` 兼容了 `answer/response/description/string`，但只在假模型上验证；真模型可能返回 markdown 包裹或带引导语（`normalizeOcrText` 只做了常见前缀清理）。
 - **多轮历史块对真模型的增益**：规则改写对检索的增益有断言，但「历史块是否真的改善回答质量」需要真模型 + 人工比对。
