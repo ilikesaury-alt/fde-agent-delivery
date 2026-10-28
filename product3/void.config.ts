@@ -17,6 +17,7 @@ export default defineConfig({
       {
         "binding": "DB",
         "database_name": "kb-ask-db",
+        "database_id": "722408dc-313a-4386-950f-ee35d867c9f5",
         "migrations_dir": "db/migrations"
       }
     ],

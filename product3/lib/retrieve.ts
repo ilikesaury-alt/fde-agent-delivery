@@ -9,7 +9,15 @@ import type { Chunk, Hit } from "./types.ts";
 import type { Repo, VectorIndex } from "./repo.ts";
 
 export const DEFAULT_TOP_K = 6;
-export const DEFAULT_MIN_SCORE = 0.35;
+/**
+ * 默认相似度阈值。
+ *
+ * 尺度差异（都实测过，不要互相套用）：
+ *   真 bge-m3：相关文本 0.52 / 0.65（2026-10-28 线上实测）
+ *   本地词袋假嵌入：相关文本 0.05–0.2
+ * 所以默认值取「线上安全」；本地 shim 必须显式注入 RETRIEVE_MIN_SCORE=0.05。
+ */
+export const DEFAULT_MIN_SCORE = 0.45;
 
 export type RetrieveOptions = {
   topK?: number;

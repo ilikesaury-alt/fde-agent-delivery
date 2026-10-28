@@ -15,6 +15,8 @@ export type Document = {
   chunkCount: number;
   error: string | null;
   createdAt: number;
+  /** 索引确认时间（向量写入被平台接受的时刻；检索立即可见性由 Vectorize 决定） */
+  indexedAt?: number;
 };
 
 /** 列表用：不含正文（避免一次列表把全部原文搬进 Worker） */

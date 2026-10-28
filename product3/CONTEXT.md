@@ -22,7 +22,7 @@
 | 8 提交 | ⏸ 需你授权（你有「提交须本人确认」约定） | E2E pending 标注 |
 | 9 HANDOFF | ✅ | `product3/docs/HANDOFF-kb-ask.md` |
 | 10 复盘/Skill | ⏳ | `capture-experience`（待收尾） |
-| 11 E2E（你手动） | ⏳ 待你执行 | 部署 + 四绑定核验 + eval 标定阈值 |
+| 11 部署 + E2E | ✅ 完成（version 74ca217b，线上 E2E **12/12**） | 见 [deploy-kb-ask.md](docs/deploy-kb-ask.md) |
 
 已交付两产品覆盖的能力：
 
@@ -381,7 +381,7 @@ SSE 生命周期（无定时器泄漏、无开流后返回状态码、错误路�
 | 7 | 配额守卫 + 无半成品 | 单测「嵌入失败」：failed + error 文案 + 补偿清理 | ✅ |
 | 8 | 令牌 401 + 零密钥前端 | 单测「鉴权」3 条（GET/POST/DELETE）；flow-check §7 | ✅ |
 | 9 | 历史问答落库可回看 | flow-check §5（≥2 条含拒答）；单测「问答落库」 | ✅ |
-| 10 | 本地可测性 + 部署四绑定 | M0 实测 `dist/ssr/wrangler.json` 含 `ai.binding=AI` 与 `vectorize[{VEC, kb-ask}]`；`deploy.mjs` 探针 + 四绑定核验 | ✅ 本地 / ⏳ 线上 |
+| 10 | 本地可测性 + 部署四绑定 | M0 实测产物含 `ai`/`vectorize`；线上 `versions view` 四绑定齐全；**线上 E2E 12/12**（真 bge-m3 + 真 Vectorize + 真 magpie） | ✅ 本地 + ✅ 线上 |
 
 ### 验证命令与结果（可复现）
 
@@ -397,8 +397,9 @@ ego-browser nodejs < e2e/smoke-ui.mjs            # 通过 18 · 失败 0
 
 ### 尚未验证（诚实清单，第 11 步交给你）
 
-- **线上真实部署**：D1 `kb-ask-db` 与 Vectorize `kb-ask` 索引尚未创建（需你的 Cloudflare 凭据）。
-- **真模型阈值标定**：`RETRIEVE_MIN_SCORE` 基线 0.35 是用假嵌入估的；必须用线上真 bge-m3 跑 `npm run eval` 扫曲线后写死（D16）。
+- ~~线上真实部署~~ → **已完成（2026-10-28，version `dfddedbf`）**：D1 `kb-ask-db`(APAC) + Vectorize `kb-ask`(1024/cosine) 已建，migration 已应用，四绑定已核验；详见 `product3/docs/deploy-kb-ask.md`
+- **真模型阈值标定**：`RETRIEVE_MIN_SCORE` 基线 0.35 是用假嵌入估的；必须用线上真 bge-m3 跑 `npm run eval` 扫曲线后写死（D16）。**当前线上仍为默认 0.35，未标定。**
 - **PDF 真实文件**：只做了代码路径与错误分支，未用真实 PDF（含扫描件）验证抽取质量。
+- **线上运行时 E2E**：本沙箱出网策略拦截 `*.workers.dev`（产品② 同样连不通，example.com 正常），故 `/api/health`、首页、flow-check、eval 均未在线上执行。判定与证据见 `product3/docs/deploy-kb-ask.md` §5。
 - **配额耗尽文案**：用注入错误模拟，未真的打满 Workers AI 日额度。
 

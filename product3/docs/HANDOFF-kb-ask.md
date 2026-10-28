@@ -1,7 +1,7 @@
 # HANDOFF · kb-ask（产品③ 企业知识库问答）
 
 > **面向**：接手这个功能的下一个开发会话（冷启动入口）。回答「从哪接着干」，不重复讲实现细节。
-> **当前 revision**：工作区未提交（2026-10-28）。`git status` 中 `product3/` 全部为新增/未跟踪。
+> **当前 revision**：`9863237` + 本文件所在未提交改动。**已上线且线上 E2E 12/12 通过**：version `74ca217b-f759-436a-97c6-99604b52f683`。
 > **需求与验收**：[`product3/CONTEXT.md`](../CONTEXT.md)（§5 验收标准、§8 交叉审查处置、§9 验收证据）
 > **交付文档**：[`product3/docs/features/kb-ask/kb-ask-交付文档.md`](./features/kb-ask/kb-ask-交付文档.md)
 
@@ -9,7 +9,9 @@
 
 ## 1. 一句话现状
 
-本地全链路已跑通并全绿（单测 93、接口 E2E 32、浏览器冒烟 18、评测四项达标），**尚未线上部署**——缺 D1 库与 Vectorize 索引两个云端资源（需用户凭据）。
+本地全链路全绿（单测 96、接口 E2E 32、浏览器冒烟 18、评测达标），**且已上线并跑通线上 E2E 12/12**（真 bge-m3 + 真 Vectorize + 真 magpie，引用 score 0.737）。
+
+⚠️ 首次上线时功能完全不可用，暴露了 4 个只在线下测不到的缺陷（query 参数被拒、getByIds 不可作回读判据、Vectorize upsert 是异步的、阈值默认值有第二份硬编码）——完整复盘与修复见 [deploy-kb-ask.md](./deploy-kb-ask.md) §5。**这是本产品最值得读的一段。**
 
 ## 2. 关键文件地图
 
@@ -60,7 +62,7 @@ ego-browser nodejs < e2e/smoke-ui.mjs
 
 ## 4. 未解决问题（按优先级）
 
-1. **线上部署未做**：`wrangler d1 create kb-ask-db` + `wrangler vectorize create kb-ask --dimensions 1024 --metric cosine` + 回填 `void.config.ts` 的 database_id/（index 名已写死为 `kb-ask`）。之后 `npm run deploy -- --secrets .secrets.json`，**逐项核验四个绑定**（ASSETS/DB/AI/VEC）。
+1. ~~线上部署~~ → **已完成**（2026-10-28）：见 [deploy-kb-ask.md](./deploy-kb-ask.md)。剩余：在你本机跑线上 flow-check / eval / 浏览器用例。
 2. **阈值未标定**：`RETRIEVE_MIN_SCORE` 基线 0.35 来自假嵌入，必须用线上真 `bge-m3` 跑 `npm run eval` 扫曲线后写死（CONTEXT D16）。
 3. **PDF 未用真实文件验证**：只覆盖了代码路径与错误分支；扫描件分支未经真实文件验证。
 4. **问答历史无 UI**：`GET /api/history` 已可用，`pages/index.tsx` 未展示。

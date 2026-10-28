@@ -56,6 +56,7 @@ export function createMemoryRepo(): Repo & { __documents: Map<string, Document>;
       if (patch.chunkCount !== undefined) d.chunkCount = patch.chunkCount;
       if (patch.error !== undefined) d.error = patch.error;
       if (patch.title !== undefined) d.title = patch.title;
+      if (patch.indexedAt !== undefined) d.indexedAt = patch.indexedAt;
     },
     async deleteDocument(id) {
       const ids = [...chunks.values()].filter((c) => c.docId === id).map((c) => c.id);
@@ -113,6 +114,13 @@ export function createMemoryVectorIndex(): VectorIndex & { __vectors: Map<string
     },
     async existing(ids) {
       return ids.filter((id) => vectors.has(id));
+    },
+    async queryById(id, options) {
+      const v = vectors.get(id);
+      if (!v) return { matches: [] };
+      const scored = [...vectors.entries()].map(([k, val]) => ({ id: k, score: cosine(v, val) }));
+      scored.sort((a, b) => b.score - a.score);
+      return { matches: scored.slice(0, options?.topK ?? 1) };
     },
   };
 }

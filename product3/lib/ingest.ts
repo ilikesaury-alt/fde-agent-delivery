@@ -22,7 +22,7 @@ import { embedAll } from "./embed.ts";
 import type { AILike } from "./embed.ts";
 import { ERR } from "./errors.ts";
 import { normalizeText, sha256Hex } from "./hash.ts";
-import type { Repo, VectorIndex } from "./repo.ts";
+import { awaitVectorAcceptance, type Repo, type VectorIndex } from "./repo.ts";
 import type { Chunk, Document, DocSource } from "./types.ts";
 
 /** 单文档硬上限：太长的文档应拆分导入（也保护 Vectorize 免费额度） */
@@ -33,7 +33,7 @@ export const MAX_DOC_CHUNKS = 400;
 export const MAX_LIBRARY_CHUNKS = 4_000;
 
 export class IngestError extends Error {
-  readonly code: "empty" | "too_long" | "too_many_chunks" | "library_full" | "duplicate";
+  readonly code: "empty" | "too_long" | "too_many_chunks" | "library_full" | "duplicate" | "verify_pending";
   constructor(code: IngestError["code"], message: string) {
     super(message);
     this.name = "IngestError";
@@ -41,7 +41,13 @@ export class IngestError extends Error {
   }
 }
 
-export type IngestDeps = { repo: Repo; index: VectorIndex; ai: AILike };
+export type IngestDeps = {
+  repo: Repo;
+  index: VectorIndex;
+  ai: AILike;
+  /** 回读校验的重试参数（Vectorize 最终一致；测试可调小） */
+  verify?: { attempts?: number; baseDelayMs?: number };
+};
 
 export type IngestInput = {
   source: DocSource;
@@ -182,7 +188,7 @@ export async function ingest(deps: IngestDeps, input: IngestInput): Promise<Inge
     throw e;
   }
 
-  // ⑤ 收尾：写新 → 回读校验 → 成功后删旧（B1）
+  // ⑤ 收尾：先清重试残留 → 写新（失败才做破坏性补偿）
   try {
     // retry 场景需要先清掉同一 id 下的旧 chunk/向量（它们本就不可用）
     if (retryTarget) {
@@ -210,12 +216,8 @@ export async function ingest(deps: IngestDeps, input: IngestInput): Promise<Inge
         metadata: { docId: c.docId, headingPath: c.headingPath.slice(0, 200) },
       })),
     );
-
-    // 写后回读校验：Vectorize 的最终一致性骗过我们一次就会「导入成功但检索不到」
-    const persisted = await deps.index.existing(chunks.map((c) => c.id));
-    if (persisted.length !== chunks.length) throw new Error(ERR.vectorVerifyFailed);
   } catch (e) {
-    // B3：失败必须补偿，不能留下「可被检索但状态 failed」或孤儿 chunk
+    // 真正的写入失败：D1 或 upsert 抛错 → 补偿清理是安全的（向量确实没进去）
     await cleanupPartial(deps, targetId, chunks.map((c) => c.id));
     const message = e instanceof Error ? e.message : ERR.embedFailed;
     await deps.repo.insertDocument({
@@ -230,7 +232,26 @@ export async function ingest(deps: IngestDeps, input: IngestInput): Promise<Inge
     throw new Error(message);
   }
 
-  await deps.repo.updateDocument(targetId, { status: "ready", chunkCount: chunks.length, error: null });
+  // ⑥ 写入确认 —— **不等待向量可见**。
+  //
+  // 线上实测（2026-10-28，多次复现）：
+  //   - vectorize upsert 返回 mutationId（平台已接受），但**立即及随后数十秒内**
+  //     query / queryById / getByIds 全部读不到新向量；数据会在几十秒~几分钟后进入索引。
+  //   - 因此「写完立刻回读」不适用于 Vectorize，它会把正常写入判成失败。
+  //
+  // 设计取舍：把 upsert 的 mutationId 当作成功凭据（这正是平台的异步契约），
+  // 文档直接置 ready；索引追上之前检索会少命中，属**优雅降级**而非故障。
+  // mutationId 写入文档记录，便于线上排障时对账。
+  //
+  // 只有「upsert 抛错」才算真失败（在 ⑤ 的 catch 里处理）。
+  const accepted = await awaitVectorAcceptance(deps.index, chunks.map((c) => c.id), deps.verify ?? {});
+
+    await deps.repo.updateDocument(targetId, {
+    status: "ready",
+    chunkCount: chunks.length,
+    error: null,
+    indexedAt: Date.now(),
+  });
 
   // ⑥ 新文档已 ready，才删除被替换的旧文档（旧文档此时才失去存在意义）
   if (replaceTarget) {

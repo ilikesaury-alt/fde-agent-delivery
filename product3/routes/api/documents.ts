@@ -29,6 +29,7 @@ import {
   type RouteCtx,
 } from "../../lib/http.ts";
 import { IngestError, ingest, MAX_DOC_CHARS } from "../../lib/ingest.ts";
+import { awaitVectorAbsence } from "../../lib/repo.ts";
 import type { IngestDeps } from "../../lib/ingest.ts";
 import type { DocSource } from "../../lib/types.ts";
 
@@ -149,11 +150,15 @@ export const DELETE = defineHandler(async (c) => {
       console.warn(`[documents] chunk count drift: d1=${removed.length} listed=${chunkIds.length}`);
     }
 
-    // 删除后断言：残留向量会让检索引用到不存在的 chunk
+    // 删除后确认向量消失 —— 同样受最终一致性影响，必须重试而不是立即断言
     if (chunkIds.length) {
-      const leftover = await index.existing(chunkIds);
+      const { leftover } = await awaitVectorAbsence(index, chunkIds, (c as RouteCtx)._verify ?? {});
       if (leftover.length) {
-        return jsonResponse(500, { error: ERR.docDeleteVectorLeft(leftover.length) });
+        return jsonResponse(200, {
+          ok: true,
+          removedChunks: chunkIds.length,
+          warning: ERR.docDeleteVectorLeft(leftover.length),
+        });
       }
     }
     return jsonResponse(200, { ok: true, removedChunks: chunkIds.length });
@@ -191,6 +196,12 @@ async function runIngest(
 
 function ingestErrorResponse(e: IngestError): Response {
   const status =
-    e.code === "too_long" || e.code === "too_many_chunks" ? 413 : e.code === "library_full" ? 409 : 400;
+    e.code === "too_long" || e.code === "too_many_chunks"
+      ? 413
+      : e.code === "library_full"
+        ? 409
+        : e.code === "verify_pending"
+          ? 503
+          : 400;
   return jsonResponse(status, { error: e.message });
 }

@@ -6,6 +6,7 @@
  */
 
 import { checkAccessToken } from "./auth.ts";
+import { DEFAULT_MIN_SCORE, DEFAULT_TOP_K } from "./retrieve.ts";
 import type { AILike } from "./embed.ts";
 import type { LLMEnv } from "./llm.ts";
 import { createD1Repo, createVectorizeIndex, type D1Like, type Repo, type VectorIndex, type VectorizeLike } from "./repo.ts";
@@ -20,6 +21,8 @@ export type RouteCtx = {
   _index?: VectorIndex;
   /** 测试注入口：替换嵌入模型 */
   _ai?: AILike;
+  /** 测试注入口：Vectorize 最终一致性的重试参数 */
+  _verify?: { attempts?: number; baseDelayMs?: number };
 };
 
 export type ResolvedEnv = LLMEnv & {
@@ -87,7 +90,7 @@ export function resolveRetrieveOptions(c: unknown): { topK: number; minScore: nu
   const topK = Number(e.RETRIEVE_TOP_K);
   const minScore = Number(e.RETRIEVE_MIN_SCORE);
   return {
-    topK: Number.isFinite(topK) && topK > 0 ? Math.min(Math.trunc(topK), 20) : 6,
-    minScore: Number.isFinite(minScore) && minScore >= 0 && minScore <= 1 ? minScore : 0.35,
+    topK: Number.isFinite(topK) && topK > 0 ? Math.min(Math.trunc(topK), 20) : DEFAULT_TOP_K,
+    minScore: Number.isFinite(minScore) && minScore >= 0 && minScore <= 1 ? minScore : DEFAULT_MIN_SCORE,
   };
 }

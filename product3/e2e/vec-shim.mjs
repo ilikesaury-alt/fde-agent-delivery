@@ -49,6 +49,13 @@ export function createVectorizeShim() {
     async getByIds(ids) {
       return ids.filter((id) => vectors.has(id)).map((id) => ({ id }));
     },
+    async queryById(id, options = {}) {
+      const v = vectors.get(id);
+      if (!v) return { matches: [] };
+      const scored = [...vectors.entries()].map(([k, val]) => ({ id: k, score: cosine(v, val) }));
+      scored.sort((a, b) => b.score - a.score);
+      return { matches: scored.slice(0, options.topK ?? 1) };
+    },
     /** 调试/校验用 */
     __size() {
       return vectors.size;

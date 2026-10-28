@@ -168,17 +168,44 @@ describe("ingest — 嵌入失败与配额", () => {
 });
 
 describe("ingest — 写后回读校验", () => {
-  it("向量未真正落库 → 置 failed 而不是假成功", async () => {
+  it("upsert 抛错 → 置 failed（真失败）", async () => {
     const repo = createMemoryRepo();
     const index = createMemoryVectorIndex();
-    // 模拟「upsert 无效果」的实现缺陷
-    const brokenIndex = { ...index, upsert: async () => {}, existing: index.existing, query: index.query, deleteByIds: index.deleteByIds };
+    const throwingIndex = {
+      ...index,
+      upsert: async () => {
+        throw new Error("vectorize 500");
+      },
+      existing: index.existing,
+      query: index.query,
+      queryById: index.queryById,
+      deleteByIds: index.deleteByIds,
+    };
     await assertThrows(
-      () => ingest({ repo, index: brokenIndex, ai: createFakeAI() }, { source: "paste", sourceRef: null, title: "t", text: DOC }),
-      (e) => e instanceof Error && /校验失败/.test(e.message),
+      () => ingest({ repo, index: throwingIndex, ai: createFakeAI() }, { source: "paste", sourceRef: null, title: "t", text: DOC }),
+      (e) => e instanceof Error,
     );
     const docs = await repo.listDocuments();
-    assertEqual(docs[0].status, "failed", "回读失败必须置 failed");
+    assertEqual(docs[0].status, "failed", "upsert 抛错必须置 failed");
+    assert(Boolean(docs[0].error), "失败原因不能为空");
+  });
+
+  it("upsert 未抛错但向量暂不可见 → 文档 ready（Vectorize 异步语义）", async () => {
+    const repo = createMemoryRepo();
+    const inner = createMemoryVectorIndex();
+    // 模拟线上：upsert 被接受但数据尚未可见
+    const pendingIndex = {
+      ...inner,
+      existing: async () => [],
+      queryById: async () => ({ matches: [] }),
+    };
+    const r = await ingest(
+      { repo, index: pendingIndex, ai: createFakeAI(), verify: { attempts: 1 } },
+      { source: "paste", sourceRef: null, title: "t", text: DOC },
+    );
+    assertEqual(r.document.status, "ready", "平台已接受 mutationId 即视为成功（不阻塞在可见性上）");
+    assert(r.document.chunkCount > 0);
+    assert(Boolean(r.document.indexedAt), "应记录索引验收时间");
   });
 });
 
@@ -246,37 +273,40 @@ describe("ingest — B1：整篇替换失败时旧文档必须还在", () => {
 });
 
 describe("ingest — B3：失败文档不可参与检索", () => {
-  it("向量写入校验失败 → 文档置 failed，且不出现在检索命中里", async () => {
+  it("upsert 抛错置 failed 的文档，其 chunk 不应产出引用", async () => {
     const repo = createMemoryRepo();
     const index = createMemoryVectorIndex();
-    // 模拟「upsert 无效」：写不进向量
-    const brokenIndex = {
+    const throwingIndex = {
       ...index,
-      upsert: async () => {},
+      upsert: async () => {
+        throw new Error("boom");
+      },
       existing: index.existing,
       query: index.query,
+      queryById: index.queryById,
       deleteByIds: index.deleteByIds,
     };
-    await assertThrows(
-      () => ingest({ repo, index: brokenIndex, ai: createFakeAI() }, { source: "paste", sourceRef: null, title: "t", text: DOC }),
-      (e) => e instanceof Error,
+    await assertThrows(() =>
+      ingest({ repo, index: throwingIndex, ai: createFakeAI() }, { source: "paste", sourceRef: null, title: "t", text: DOC }),
     );
     const docs = await repo.listDocuments();
-    assertEqual(docs.length, 1, "应留下一条 failed 记录供用户查看原因");
     assertEqual(docs[0].status, "failed");
-
-    // 即使索引里残留了向量，检索也必须过滤掉非 ready 文档
+    // 构造一个「能返回该文档向量」的索引视图，验证检索侧仍会过滤掉非 ready 文档
+    const readable = createMemoryVectorIndex();
+    await readable.upsert([{ id: `${docs[0].id}:0`, values: (await import("./fakes.ts")).fakeEmbed("部署") }]);
+    await repo.insertChunks([
+      { id: `${docs[0].id}:0`, docId: docs[0].id, idx: 0, headingPath: "部署", text: "部署用 wrangler deploy。", createdAt: 0 },
+    ]);
     const { retrieve } = await import("../lib/retrieve.ts");
     const { embedOne } = await import("../lib/embed.ts");
     const qv = await embedOne(createFakeAI(), "部署");
-    const r = await retrieve(qv, { repo, index: brokenIndex }, { minScore: 0 });
-    assertEqual(r.hits.length, 0, "failed 文档不应产出引用");
+    const r = await retrieve(qv, { repo, index: readable }, { minScore: 0 });
+    assertEqual(r.hits.length, 0, "failed 文档不得产出引用");
   });
 
   it("chunk 存在但文档行已删（孤儿 chunk）→ 不产出引用", async () => {
     const deps = makeDeps();
     const { document: doc } = await ingest(deps, { source: "paste", sourceRef: null, title: "t", text: DOC });
-    // 直接删文档行，故意留下 chunk 与向量
     deps.repo.__documents.delete(doc.id);
     const { retrieve } = await import("../lib/retrieve.ts");
     const { embedOne } = await import("../lib/embed.ts");
@@ -299,5 +329,53 @@ describe("ingest — B4：并发导入同内容只落一份", () => {
     assertEqual(repo.__documents.size, 1, `应只有一份文档，实际 ${repo.__documents.size}`);
     assert(a.skipped !== b.skipped, "并发场景下应有一个走幂等跳过");
     assertEqual(a.document.id, b.document.id, "两边应指向同一份文档");
+  });
+});
+
+
+// ───────────────────────────────────────────────────────────────────────────
+// 线上事故回归（2026-10-28 首次部署）：Vectorize 最终一致 → 立即回读假阴性
+// 真实现场：upsert 成功后 getByIds 读不到 → 误判失败 → 补偿删 D1 行 → 孤儿向量
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("ingest — Vectorize 异步可见性（线上事故回归）", () => {
+  /** 构造一个「upsert 被接受但永远读不到」的索引替身（线上 Vectorize 的真实行为） */
+  function alwaysInvisibleIndex() {
+    const inner = createMemoryVectorIndex();
+    return {
+      ...inner,
+      __vectors: inner.__vectors,
+      async existing() {
+        return [];
+      },
+      async queryById() {
+        return { matches: [] };
+      },
+    };
+  }
+
+  it("向量始终不可见 → 仍判定 ready（平台异步契约），且数据一条都不丢", async () => {
+    const repo = createMemoryRepo();
+    const index = alwaysInvisibleIndex();
+    const r = await ingest(
+      { repo, index, ai: createFakeAI(), verify: { attempts: 1 } },
+      { source: "paste", sourceRef: null, title: "t", text: DOC },
+    );
+    assertEqual(r.document.status, "ready", "upsert 未抛错即成功");
+    assert(r.document.chunkCount > 0);
+    assertEqual(repo.__chunks.size, r.document.chunkCount, "chunk 行必须写入");
+    assert(index.__vectors.size > 0, "向量必须已写入（不能补偿删除）");
+    assert(Boolean(r.document.indexedAt), "应记录验收时间用于对账");
+  });
+
+  it("重试同一内容 → 幂等跳过（不会因为不可见而重复写入）", async () => {
+    const repo = createMemoryRepo();
+    const index = alwaysInvisibleIndex();
+    const deps = { repo, index, ai: createFakeAI(), verify: { attempts: 1 } };
+    const a = await ingest(deps, { source: "paste", sourceRef: null, title: "t", text: DOC });
+    const b = await ingest(deps, { source: "paste", sourceRef: null, title: "t", text: DOC });
+    assertEqual(b.skipped, true, "第二次应幂等跳过");
+    assertEqual(a.document.id, b.document.id);
+    assertEqual(repo.__documents.size, 1);
   });
 });
