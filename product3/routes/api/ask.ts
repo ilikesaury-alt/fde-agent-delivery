@@ -41,6 +41,13 @@ import type { Repo } from "../../lib/repo.ts";
 /** 拒答时的统一措辞（前端口径不能漂） */
 export const REFUSAL_TEXT = "知识库中未找到足以回答该问题的依据。";
 
+/**
+ * 「刚导入的文档可能还在索引中」的判定窗口。
+ * Vectorize 的 upsert 是异步的：线上实测导入后 0–40 秒必拒答，第 50 秒才命中；
+ * 另有一次观测 10 余秒即可检索。取 90 秒留余量（跨环境可能更慢）。
+ */
+export const INDEXING_HINT_WINDOW_MS = 90_000;
+
 /** 问题长度上限（远超正常提问，只为挡住粘贴整篇文档） */
 const MAX_QUESTION_CHARS = 2000;
 
@@ -62,11 +69,12 @@ async function loadTitles(repo: Repo, docIds: Iterable<string>): Promise<Map<str
 }
 
 /** 拒答结果：带「未通过阈值但最接近」的片段，帮用户判断是没导入还是问法不对 */
-function buildRefusal(r: RetrieveResult, titles: Map<string, string>): AskResult {
+function buildRefusal(r: RetrieveResult, titles: Map<string, string>, indexingRecently: boolean): AskResult {
   return {
     answer: REFUSAL_TEXT,
     citations: [],
     refused: true,
+    indexingRecently: indexingRecently || undefined,
     nearest: r.nearest.map((h) => ({
       chunkId: h.chunk.id,
       docTitle: titles.get(h.chunk.docId) ?? "未命名文档",
@@ -75,6 +83,20 @@ function buildRefusal(r: RetrieveResult, titles: Map<string, string>): AskResult
       score: h.score,
     })),
   };
+}
+
+/**
+ * 库内是否有「刚刚写完索引」的文档。
+ * 只用于给拒答加一句可行动的解释，读写失败一律当作 false（不能因为提示失败把问答弄挂）。
+ */
+async function hasRecentIndexing(repo: Repo): Promise<boolean> {
+  try {
+    const docs = await repo.listDocuments(20);
+    const now = Date.now();
+    return docs.some((d) => d.indexedAt != null && now - d.indexedAt < INDEXING_HINT_WINDOW_MS);
+  } catch {
+    return false;
+  }
 }
 
 export const POST = defineHandler(async (c) => {
@@ -141,7 +163,7 @@ export const POST = defineHandler(async (c) => {
 
         if (!retrieved.hits.length) {
           const titles = await loadTitles(repo, retrieved.nearest.map((h) => h.chunk.docId));
-          const refusal = buildRefusal(retrieved, titles);
+          const refusal = buildRefusal(retrieved, titles, await hasRecentIndexing(repo));
           const qaId = makeQaId();
           let persisted = true;
           try {
@@ -180,7 +202,7 @@ export const POST = defineHandler(async (c) => {
         const titles = await loadTitles(repo, retrieved.hits.map((h) => h.chunk.docId));
         let result: AskResult;
         if (!answer.trim() || isInsufficient(answer)) {
-          result = buildRefusal(retrieved, titles);
+          result = buildRefusal(retrieved, titles, await hasRecentIndexing(repo));
         } else {
           result = {
             answer: stripMarkers(answer),

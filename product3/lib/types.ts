@@ -50,12 +50,28 @@ export type Citation = {
   score: number;
 };
 
+/** 拒答时展示的「最相近片段」（未通过阈值） */
+export type NearestHit = {
+  chunkId: string;
+  docTitle: string;
+  headingPath: string;
+  snippet: string;
+  score: number;
+};
+
 export type AskResult = {
   answer: string;
   citations: Citation[];
   refused: boolean;
   /** 拒答时给出「最相近片段」帮助用户判断是否该补语料 */
-  nearest?: Array<{ chunkId: string; docTitle: string; headingPath: string; snippet: string; score: number }>;
+  nearest?: NearestHit[];
+  /**
+   * 拒答时另有说明：库内最近 90 秒有文档刚写完索引。
+   * 动机（线上实测 2026-10-28）：Vectorize 的 upsert 是异步的，导入接口早就返回
+   * ready，但真正可检索约需 50 秒。这期间提问必然拒答 —— 不给提示的话，
+   * 用户会判定成「上传失败 / 搜索坏了」。
+   */
+  indexingRecently?: boolean;
 };
 
 export type QaRecord = {

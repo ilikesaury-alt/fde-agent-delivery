@@ -69,7 +69,12 @@ const afterImport = await page.evaluate(() => ({
   items: [...document.querySelectorAll('[data-testid="doc-item"]')].map((n) => n.innerText),
   askDisabled: document.querySelector('[data-testid="ask-btn"]')?.disabled ?? null,
 }));
-check("② 导入成功有可见反馈", /导入成功|切分为/.test(afterImport.msg), afterImport.msg.replace(/\s+/g, " ").slice(0, 70));
+check("② 导入成功有可见反馈", /已导入|切分为/.test(afterImport.msg), afterImport.msg.replace(/\s+/g, " ").slice(0, 70));
+check(
+  "② 提示索引约需 1 分钟（避免被误判成上传失败）",
+  /约 1 分钟|异步/.test(afterImport.msg),
+  afterImport.msg.replace(/\s+/g, " ").slice(0, 90),
+);
 check("② 文档出现在列表", afterImport.items.length >= 1, `items=${afterImport.items.length} ${afterImport.items[0]?.replace(/\s+/g, " ").slice(0, 40)}`);
 check("① 未输入问题时「提问」仍 disabled", afterImport.askDisabled === true, `disabled=${afterImport.askDisabled}`);
 

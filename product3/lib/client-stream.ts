@@ -16,29 +16,13 @@ export type StepStatus = "started" | "done" | "failed";
 
 export type StepState = { step: StepName; status: StepStatus; detail?: string };
 
-export type Citation = {
-  index: number;
-  docId: string;
-  docTitle: string;
-  headingPath: string;
-  snippet: string;
-  score: number;
-};
-
-export type NearestHit = {
-  chunkId: string;
-  docTitle: string;
-  headingPath: string;
-  snippet: string;
-  score: number;
-};
-
-export type AskResult = {
-  answer: string;
-  citations: Citation[];
-  refused: boolean;
-  nearest?: NearestHit[];
-};
+/**
+ * 引用 / 拒答 / 问答结果的类型**只从 lib/types.ts 出**。
+ * 这里曾各写一份，与 lib/types.ts 的 AskResult 分头演化：
+ * 加了 indexingRecently 后就出现「运行时字段存在、类型里没有」。
+ */
+export type { AskResult, Citation, NearestHit } from "./types.ts";
+import type { AskResult } from "./types.ts";
 
 export type AskHandlers = {
   onStep?: (s: StepState) => void;

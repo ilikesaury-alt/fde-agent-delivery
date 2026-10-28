@@ -167,7 +167,7 @@ npm run deploy -- --secrets <path-to-secrets>
 把私有文档变成可问、答得有据可查的知识库：粘贴 / .md·.txt / PDF（浏览器端抽文本）/ 网页链接导入 → 自动切分与向量索引（Workers AI bge-m3 + Vectorize）→ 流式问答 + 引用溯源；依据不足时明确拒答而不编造。
 
 - 本地全绿：单测 **93**、接口 E2E **32/32**、浏览器冒烟 **18/18**、评测（Recall 100% / 拒答正确 100% / 引用准确 100%）
-- 状态：**已上线且线上接口 E2E 13/13 通过**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验；含「等约 50s 索引追上后验证引用」一项）。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
+- 状态：**已上线且线上接口 E2E 13/13 通过**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验；含「轮询等索引追上后验证引用」一项）。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
 - 上线排障复盘：`product3/docs/deploy-kb-ask.md` §5（首次上线暴露 4 个只在线下测不到的真实缺陷）
 - 需求与验收：`product3/CONTEXT.md`（§5 验收标准 / §8 交叉审查处置 / §9 验收证据）
 - 快速开始：`cd product3 && npm install --ignore-scripts && npm test && npm run build`

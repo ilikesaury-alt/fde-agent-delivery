@@ -326,3 +326,37 @@ describe("ask — 问答与拒答", () => {
     assertEqual(body.records[0].question, "部署命令");
   });
 });
+
+// ── 索引延迟提示（线上实测：导入后 0–40s 必拒答，第 50s 才命中）────────
+describe("拒答时的「刚导入的文档可能还在索引中」提示", () => {
+  it("库内有 90 秒内刚导入的文档 → refused 结果带 indexingRecently=true", async () => {
+    const bag = newBag();
+    await (docsPOST as Handler)(makeCtx({ body: { source: "paste", text: DOC }, bag }));
+    const resp = await (askPOST as Handler)(
+      makeCtx({ body: { question: "量子色动力学的渐近自由" }, bag, fetchImpl: stubLlmFetch("不该被调用") }),
+    );
+    const events = await readSse(resp);
+    const result = (events.find((e) => e.event === "done")!.data as {
+      result: { refused: boolean; indexingRecently?: boolean };
+    }).result;
+    assertEqual(result.refused, true);
+    assertEqual(result.indexingRecently, true, "刚导入就拒答，必须提示索引尚未生效");
+  });
+
+  it("索引早已完成（indexedAt 很旧）→ 不带该提示", async () => {
+    const bag = newBag();
+    const imported = await (docsPOST as Handler)(makeCtx({ body: { source: "paste", text: DOC }, bag }));
+    const doc = ((await imported.json()) as { document: { id: string } }).document;
+    await bag.repo.updateDocument(doc.id, { indexedAt: Date.now() - 10 * 60_000 });
+
+    const resp = await (askPOST as Handler)(
+      makeCtx({ body: { question: "量子色动力学的渐近自由" }, bag, fetchImpl: stubLlmFetch("不该被调用") }),
+    );
+    const events = await readSse(resp);
+    const result = (events.find((e) => e.event === "done")!.data as {
+      result: { refused: boolean; indexingRecently?: boolean };
+    }).result;
+    assertEqual(result.refused, true);
+    assertEqual(result.indexingRecently, undefined, "旧的文档不应触发索引提示");
+  });
+});

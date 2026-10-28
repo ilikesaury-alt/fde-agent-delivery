@@ -167,7 +167,7 @@ t≈…        finally: stream.close()（清理 void/sse 的 keepAlive interval�
 
 ### 5.4 Vectorize 的写入是异步的（最反直觉的一条，线上实测）
 
-| 探测方式 | upsert 后立即 | 约 50s 后 |
+| 探测方式 | upsert 后立即 | 数十秒后（实测 10–50s） |
 |---|---|---|
 | `query(自身向量)` | ❌ | ✅ |
 | `query(用户问题向量)` | ❌ | ✅ score 0.737 |
@@ -176,6 +176,8 @@ t≈…        finally: stream.close()（清理 void/sse 的 keepAlive interval�
 | `describe().vectorCount` | 不变 | 增加 |
 
 结论：**`upsert` 返回 `mutationId` 只代表平台已接受，不代表已可检索。**
+
+> **实测追平 10–50 秒**（同一环境多次观测；取决于文档量与当时索引负载）。因此给用户的提示取「约 1 分钟」这个**保守上界**（前端 60 秒倒计时），而不是报精确值；揁答时另附「索引异步」提示（`AskResult.indexingRecently`）。
 
 设计后果（三条，都是必须的）：
 
@@ -341,7 +343,7 @@ qa_history
 | 单元测试 | `test/*.test.ts`（进程内，不 spawn） | **96** | 切分边界、哈希幂等、导入顺序铁律/替换/补偿、检索阈值分流、引用解析与越界丢弃、SSRF 尾点、路由契约与 401 |
 | 接口 E2E | `e2e/flow-check.mjs`（打本地 shim） | 32 | 导入 → 幂等 → 问答 → 引用 → 拒答 → 历史 → 删除 → 错误码 |
 | 浏览器冒烟 | `e2e/smoke-ui.mjs`（ego-browser 驱动真实 Chromium） | 18 | 单测覆盖不到的接线：空输入禁用、进度反馈、取消回正、引用/拒答渲染、删除反馈 |
-| 线上 E2E | `e2e/live-e2e.mjs`（ego-browser + 真绑定） | **13** | 真 bge-m3 + 真 Vectorize + 真 magpie；**等待 50s 索引追上后再验证引用** |
+| 线上 E2E | `e2e/live-e2e.mjs`（ego-browser + 真绑定） | **13** | 真 bge-m3 + 真 Vectorize + 真 magpie；**轮询等索引追上（实测 50s）后再验证引用** |
 | 质量评测 | `eval/run.ts`（19 例） | 4 指标 | Recall@k / 拒答正确率 / 误拒率 / 引用准确率 |
 
 **为什么必须有线上 E2E**：本轮首次上线，本地 96 单测 + 32 E2E + 18 冒烟全绿、四绑定齐全、`/api/health` 200、首页正常，**功能却完全不可用**。四个缺陷全部只在真运行时显形（见 [deploy-kb-ask.md §5](../../deploy-kb-ask.md)）。

@@ -64,6 +64,13 @@ export default function HomePage() {
   const [fileText, setFileText] = useState("");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<{ kind: "ok" | "warn" | "err"; text: string } | null>(null);
+  /**
+   * 索引生效倒计时（毫秒时间戳）。
+   * Vectorize 的写入是异步的：线上实测导入后 0–40 秒必拒答，第 50 秒才命中。
+   * 不给倒计时的话，用户会在“导入成功”后立即提问拿到「未找到依据」，判定成上传失败。
+   */
+  const [indexingUntil, setIndexingUntil] = useState(0);
+  const [indexingLeft, setIndexingLeft] = useState(0);
 
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
@@ -125,6 +132,15 @@ export default function HomePage() {
     void refreshList();
   }, [refreshList]);
 
+  // ── 索引倒计时 ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!indexingUntil) return;
+    const tick = () => setIndexingLeft(Math.max(0, Math.ceil((indexingUntil - Date.now()) / 1000)));
+    tick();
+    const timer = setInterval(tick, 500);
+    return () => clearInterval(timer);
+  }, [indexingUntil]);
+
   // ── 导入 ────────────────────────────────────────────────────────────
   const canImport =
     !importing &&
@@ -173,7 +189,11 @@ export default function HomePage() {
         setImportMsg({ kind: "warn", text: body.message ?? "该文档内容已在库中，已跳过。" });
       } else {
         const chunks = body.document?.chunkCount ?? 0;
-        setImportMsg({ kind: "ok", text: `导入成功：切分为 ${chunks} 个片段并已完成索引。` });
+        setImportMsg({
+          kind: "ok",
+          text: `已导入：切分为 ${chunks} 个片段。向量索引写入是异步的，约 1 分钟后才能检索到。`,
+        });
+        setIndexingUntil(Date.now() + 60_000);
         setPasteText("");
         setUrl("");
         setFileText("");
@@ -418,6 +438,11 @@ export default function HomePage() {
                 }`}
               >
                 {importMsg.text}
+                {indexingLeft > 0 && (
+                  <span data-testid="indexing-countdown" className="mt-1 block text-[var(--color-ink-3)]">
+                    索引生效中，还需约 {indexingLeft} 秒；在此之前提问可能暂时无结果。
+                  </span>
+                )}
               </div>
             )}
 
@@ -550,6 +575,11 @@ export default function HomePage() {
                 {result?.refused ? (
                   <div className="flex flex-col gap-2">
                     <p data-testid="refusal" className="text-sm font-medium text-[var(--color-warn)]">{result.answer}</p>
+                    {result.indexingRecently && (
+                      <p data-testid="indexing-hint" className="rounded border border-[var(--color-warn)] bg-[var(--color-warn-soft)] px-2.5 py-1.5 text-xs text-[var(--color-warn)]">
+                        库内有刚刚导入的文档，向量索引写入是异步的（实测需约 50 秒）。请等一会儿再问一次。
+                      </p>
+                    )}
                     {result.nearest && result.nearest.length > 0 && (
                       <div className="flex flex-col gap-1.5">
                         <p className="text-[11px] text-[var(--color-ink-3)]">最相近的内容（可能是问法不同，或该内容尚未导入）：</p>

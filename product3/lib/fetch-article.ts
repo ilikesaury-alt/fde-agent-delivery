@@ -289,7 +289,33 @@ export function extractFromHtml(html: string): { text: string; title: string } {
     if (joined.length > best.length * 0.6) best = joined;
   }
 
-  return { text: best, title: normalizeText(title) };
+  return { text: dedupeRepeatedLines(best), title: normalizeText(title) };
+}
+
+/**
+ * 行级去重。
+ *
+ * 动机（线上实测 2026-10-28）：X/Twitter 这类站点会把同一条内容在卡片、meta、
+ * thread 里各渲染一次，抽取结果里每条长句重复 2–3 遍（实测一篇 1,579 字的帖子
+ * 有 9 行长句各重复 2 次，冗余 28.6%）。重复内容切分后会产生互为近重复的 chunk：
+ * 白占 top-k 名额、引用同义反复、评估命中率失真。
+ *
+ * 保守策略：只去重「≥20 字且规范化（去空白+小写）后完全相同」的行，保留首次出现；
+ * 短行（表格行、标签、标点行）不动，避免误删正常重复结构。
+ */
+export function dedupeRepeatedLines(text: string): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    const key = trimmed.replace(/\s+/g, "").toLowerCase();
+    if (trimmed.length >= 20) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function pick(v: string | null | undefined): string {

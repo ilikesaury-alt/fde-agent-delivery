@@ -6,7 +6,7 @@
  */
 
 import { assert, assertEqual, describe, it } from "./harness.ts";
-import { isBlockedHost, validateUrl } from "../lib/fetch-article.ts";
+import { dedupeRepeatedLines, extractFromHtml, isBlockedHost, validateUrl } from "../lib/fetch-article.ts";
 
 describe("fetch-article.isBlockedHost — 内网判定", () => {
   it("普通内网 IPv4 一律拦截", () => {
@@ -77,5 +77,36 @@ describe("fetch-article.validateUrl — 协议与形态", () => {
     }
     assert(msg.length > 0, "http://169.254.169.254./ 应被拒绝");
     assertEqual(validateUrl("https://example.com/a").hostname, "example.com");
+  });
+});
+
+// ── 重复正文去重（线上实测：X 页面正文重复 2–3 遍）────────────────────
+describe("dedupeRepeatedLines（重复正文去重）", () => {
+  it("完全相同的长行只保留第一次出现", () => {
+    const line = "新功能第一时间在这发 语音通话、插件、购物支付这些更新都能看到 想跟进最新动态就关注它";
+    const input = [line, "另一条不同的内容，长度也超过二十个字符用于测试", line].join("\n");
+    const out = dedupeRepeatedLines(input);
+    const hits = out.split("\n").filter((l) => l.trim() === line);
+    assertEqual(hits.length, 1, "重复长行应只保留一次");
+    assert(out.includes("另一条不同的内容"), "不重复的行必须保留");
+  });
+
+  it("忽略空白与大小写差异（视为同一行）", () => {
+    const out = dedupeRepeatedLines("Hello World This Is A Long Line\nhello  world   this is a long line");
+    assertEqual(out.split("\n").filter((l) => l.trim()).length, 1);
+  });
+
+  it("短行不去重（表格行/标签是正常重复结构）", () => {
+    const out = dedupeRepeatedLines("| a | b |\n| --- | --- |\n| a | b |");
+    assertEqual(out.split("\n").length, 3, "短行必须原样保留");
+  });
+
+  it("extractFromHtml 对大段重复正文做压缩", () => {
+    const para = "这是一段很长的正文内容，用来模拟被站点重复渲染的段落文字，长度超过二十个字符。";
+    const html = `<html><body><article><p>${para}</p><p>${para}</p><p>${para}</p><p>结尾另一段完全不同的内容，也需要保留下来用于验证。</p></article></body></html>`;
+    const { text } = extractFromHtml(html);
+    const occurrences = text.split(para).length - 1;
+    assertEqual(occurrences, 1, "重复段落应被压成一处");
+    assert(text.includes("结尾另一段完全不同的内容"), "非重复段落必须保留");
   });
 });
