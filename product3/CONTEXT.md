@@ -18,7 +18,7 @@
 | 4 实现（M0 前置） | ✅（2026-10-28） | M0 通过：Void 透传 AI/VEC + 本地全链 |
 | 5 交叉对抗 | ✅ BLOCK→已全部处置 | 4 阻塞 + 9 非阻塞，见 §8 |
 | 6 人工 Review | ✅ | 验收 10 条逐条对证据（§9） |
-| 7 交付文档 | ✅ | `product3/docs/features/kb-ask/kb-ask-交付文档.md` |
+| 7 交付文档 | ✅ | `product3/docs/features/kb-ask/kb-ask-交付文档.md` + `kb-ask-工作原理.md` |
 | 8 提交 | ⏸ 需你授权（你有「提交须本人确认」约定） | E2E pending 标注 |
 | 9 HANDOFF | ✅ | `product3/docs/HANDOFF-kb-ask.md` |
 | 10 复盘/Skill | ⏳ | `capture-experience`（待收尾） |

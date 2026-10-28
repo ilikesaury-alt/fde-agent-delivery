@@ -9,7 +9,7 @@
 | **线上地址** | https://meeting-digest.ilikesaury.workers.dev |
 | **访问令牌** | `REDACTED_TOKEN` |
 | Worker | `meeting-digest` |
-| Version ID | `9ff7d341-ff29-4ffb-b660-ee4986c21f8c` |
+| Version ID | `9ff7d341-ff29-4ffb-b660-ee4986c21f8c`（首次部署快照；**当前线上版本见 [线上环境速查](../../docs/线上环境速查.md)**） |
 | 上游网关 | https://tahoe-mainland-selection-cigarette.trycloudflare.com/v1 |
 | 模型 | `auto/hy3` |
 

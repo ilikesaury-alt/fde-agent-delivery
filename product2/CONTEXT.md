@@ -176,6 +176,7 @@ db/migrations/0001_init.sql
 - [x] 第 9 步：HANDOFF（`product2/docs/HANDOFF-content-studio.md`）
 - [x] 第 10 步：复盘与 Skill 沉淀（补写 cf-worker-local-env 两节）
 - [x] 第 11 步前置：部署（2026-10-27，version 2ea32819，绑定与资产上传已核验）
+      > 当前线上版本以 `docs/线上环境速查.md` 为准（本行是当时的部署快照）。
 - [x] 第 11 步前置：接口级 E2E（线上 401/200、真 D1 连通）
 - [x] 第 11 步：线上端到端（首字 8.4s、16.2s 完成、真 D1 落库 1 条）
 - [x] 第 11 步：线上 E2E 全量（T4/T5/T6/T8/T9/T10/T11/T12/T16 全过，证据见 docs/e2e-evidence/live/README.md）

@@ -119,7 +119,7 @@ v1 代码保留在 `legacy/worker-v1`、`legacy/frontend-v1`（仅作对照，�
   Void 把 layout 返回值挂到 `<div id="app">` 内，导致 `<meta>/<title>` 出现在 `#app` 里、`html/head/body` 被压成注释标记 → **SSR 水合错位**。
 - **为何卡 30 秒**：水合错位后 React 从 DOM 反查 fiber（`Wt()`）缓存永不命中，落入 `fm()` 的 `previousSibling` 兜底遍历，被反复调用上万次（Profiler 采样命中 10,042 次）→ 主线程阻塞 15–31 秒。只影响**表单控件聚焦**（只有它们走 `focusin` 委托路径）。
 - **修复**：`layout.tsx` 改为返回 `<>{children}</>`；head 元数据移到 `void.config.ts` 站点配置 + 新增 `pages/index.server.ts` 的 `defineHead()`。
-- **验证**：聚焦 textarea 从 **15,651ms → 0ms**；20 轮连续点击 **0/20 卡死**；线上 `a62f2e7f` 真实 LLM 生成 6 板块 + 表格，全程最大长任务仅 115ms。
+- **验证**：聚焦 textarea 从 **15,651ms → 0ms**；20 轮连续点击 **0/20 卡死**；线上 `a62f2e7f`（版本快照口径见 `docs/线上环境速查.md`） 真实 LLM 生成 6 板块 + 表格，全程最大长任务仅 115ms。
 - **之前错误结论已推翻**（已写入 FINAL 报告）：① “差异在运行时(Node vs workerd)” —— 本地 shim 同样 30.5s；② “截图超时=渲染进程卡死” —— 极简 `data:` 页截图同样超时，是 ego 环境限制；③ “header backdrop-blur 可疑” —— 移除全部 CSS 仍 30.8s。
 
 ### LLM 接入更新（2026-10-26）
