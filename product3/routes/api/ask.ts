@@ -41,7 +41,7 @@ import {
   type RouteCtx,
 } from "../../lib/http.ts";
 import { MissingConfigError, streamLLM } from "../../lib/llm.ts";
-import { retrieve, type RetrieveResult } from "../../lib/retrieve.ts";
+import { mergeResults, retrieve, type RetrieveResult } from "../../lib/retrieve.ts";
 import type { AskResult, Conversation, ConversationMessage } from "../../lib/types.ts";
 import type { Repo } from "../../lib/repo.ts";
 import type { HistoryTurn } from "../../lib/conversation.ts";
@@ -257,14 +257,31 @@ export const POST = defineHandler(async (c) => {
           flags.contextRewrite,
         );
 
-        // ── step 1: 查询嵌入（多轮时嵌的是改写后的查询）──────────────────
+        // ── step 1: 查询嵌入 ─────────────────────────────────────────────
+        // 双路（线上 M4 实测，2026-10-28）：改写查询的锚点会链式累积前几轮话题，
+        // 把第三轮「那配额是怎么算的？」稀释到误拒。所以改写时**原始问题也各嵌一次**，
+        // 两路检索结果 RRF 合并 —— 原始问题永远参与，稀释不再致命。
         await stream.send({
           event: "step",
           data: { step: "embed", status: "started", detail: rewritten ? `检索查询：${retrievalQuery}` : undefined },
         });
-        let qv: number[];
+        let retrieved: RetrieveResult;
         try {
-          qv = await embedOne(ai, retrievalQuery);
+          if (rewritten) {
+            const [qvRewritten, qvRaw] = await Promise.all([embedOne(ai, retrievalQuery), embedOne(ai, question)]);
+            await stream.send({ event: "step", data: { step: "embed", status: "done" } });
+            await stream.send({ event: "step", data: { step: "retrieve", status: "started" } });
+            const [r1, r2] = await Promise.all([
+              retrieve({ queryVector: qvRewritten, query: retrievalQuery }, { repo, index }, opts),
+              retrieve({ queryVector: qvRaw, query: question }, { repo, index }, opts),
+            ]);
+            retrieved = mergeResults(r1, r2, { topK: opts.topK });
+          } else {
+            const qv = await embedOne(ai, question);
+            await stream.send({ event: "step", data: { step: "embed", status: "done" } });
+            await stream.send({ event: "step", data: { step: "retrieve", status: "started" } });
+            retrieved = await retrieve({ queryVector: qv, query: question }, { repo, index }, opts);
+          }
         } catch (e) {
           const code = (e as { code?: string }).code;
           await stream.send({
@@ -273,11 +290,8 @@ export const POST = defineHandler(async (c) => {
           });
           return;
         }
-        await stream.send({ event: "step", data: { step: "embed", status: "done" } });
 
-        // ── step 2: 检索（向量 + 关键词融合）+ 阈值拒答 ──────────────────
-        await stream.send({ event: "step", data: { step: "retrieve", status: "started" } });
-        const retrieved = await retrieve({ queryVector: qv, query: retrievalQuery }, { repo, index }, opts);
+        // ── step 2: 阈值拒答判定（检索已在上面完成）──────────────────────
         await stream.send({
           event: "step",
           data: { step: "retrieve", status: "done", detail: retrievalDetail(retrieved, rewritten) },

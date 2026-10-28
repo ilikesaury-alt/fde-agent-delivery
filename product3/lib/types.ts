@@ -48,6 +48,10 @@ export type Hit = {
   coverage?: number;
   /** 命中项里的最小 df（越小越罕见；罕见词是关键词通道的价值来源） */
   minDf?: number;
+  /** 是否命中了 code-like term（错误码/型号——融合时权重更高，过闸也不受选择性命中数限制） */
+  codeMatched?: boolean;
+  /** 命中的「选择性 term」个数（过闸：code-like 或 ≥2） */
+  selectiveHits?: number;
   /** RRF 融合分（两路名次倒数之和） */
   rrf?: number;
 };

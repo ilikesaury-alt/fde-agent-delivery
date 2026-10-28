@@ -20,7 +20,7 @@
 export const EMBED_DIM = 1024;
 export const EMBED_MODEL = "@cf/baai/bge-m3";
 /** 与 lib/ocr.ts 的 DEFAULT_OCR_MODEL 必须一致（改动同步两处） */
-export const OCR_MODEL = "@cf/moondream/moondream3.1-9B-A2B";
+export const OCR_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 
 export function tokenize(text) {
   const norm = text.toLowerCase().replace(/\s+/g, " ");
@@ -74,10 +74,11 @@ export function createAIshim() {
         const ocrFail = process.env.OCR_FAIL;
         if (ocrFail === "quota") throw new Error("429 too many requests: neuron quota exceeded");
         if (ocrFail === "upstream") throw new Error("upstream 500");
-        if (!input?.image || !input?.question) throw new Error("OCR 入参缺 image/question");
+        const okImage = Array.isArray(input?.image) ? input.image.length > 0 : Boolean(input?.image);
+        if (!okImage) throw new Error("OCR 入参缺 image");
         ocrPages++;
         return {
-          answer: process.env.OCR_TEXT || `扫描件第 ${ocrPages} 页正文：季度复盘要点。
+          description: process.env.OCR_TEXT || `扫描件第 ${ocrPages} 页正文：季度复盘要点。
 第二行：绑定与配额均已核验。`,
         };
       }

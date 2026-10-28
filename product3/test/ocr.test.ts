@@ -13,7 +13,7 @@ import {
 } from "../lib/ocr.ts";
 import { PDF_MAX_OCR_PAGES } from "../lib/pdf.ts";
 
-const IMG = "data:image/jpeg;base64," + Buffer.from("fake-page").toString("base64");
+const IMG = "data:image/jpeg;base64," + Buffer.from("x".repeat(300)).toString("base64");
 
 describe("ocr — 常量对账（防两处漂移）", () => {
   it("默认模型与本地替身一致", () => {
@@ -90,35 +90,38 @@ describe("ocr — 返回体容错解析", () => {
 });
 
 describe("ocr — 调用与错误映射", () => {
-  it("正常路径：入参形状是 { task, image, question }（与 moondream query 任务一致）", async () => {
+  it("正常路径：llama vision 入参形状是 { image: 字节数组, prompt }", async () => {
     const seen: Array<Record<string, unknown>> = [];
     const ai = {
       async run(model: string, input: Record<string, unknown>) {
         seen.push({ model, ...input });
-        return { answer: "扫描件正文" };
+        return { description: "扫描件正文" };
       },
     };
     const text = await ocrPage(ai, IMG, {});
     assertEqual(text, "扫描件正文");
     assertEqual(seen[0].model, DEFAULT_OCR_MODEL);
-    assertEqual(seen[0].task, "query");
-    assertEqual(seen[0].image, IMG);
-    assertEqual(typeof seen[0].question, "string");
+    const image = seen[0].image as number[];
+    assert(Array.isArray(image) && image.length > 0, `image 应是非空字节数组: ${typeof seen[0].image}`);
+    assert(typeof seen[0].prompt === "string" && (seen[0].prompt as string).length > 20, "prompt 应为完整 OCR 指令");
   });
 
-  it("模型可被环境变量覆盖（中文质量不足时换模型）", async () => {
+  it("模型可被环境变量覆盖（中文质量不足时换模型，含 moondream 形状回切）", async () => {
     let modelSeen = "";
+    let shape = "";
     await ocrPage(
       {
-        async run(model: string) {
+        async run(model: string, input: Record<string, unknown>) {
           modelSeen = model;
+          shape = "task" in input ? "query" : "messages";
           return { answer: "x" };
         },
       },
       IMG,
-      { model: "@cf/qwen/qwen3.8-27b" },
+      { model: "@cf/moondream/moondream3.1-9B-A2B" },
     );
-    assertEqual(modelSeen, "@cf/qwen/qwen3.8-27b");
+    assertEqual(modelSeen, "@cf/moondream/moondream3.1-9B-A2B");
+    assertEqual(shape, "query", "moondream 走 query 形状（保留适配，恢复后可切回）");
   });
 
   it("配额错误 → OcrError(quota)（路由映射 429）", async () => {

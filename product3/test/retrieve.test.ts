@@ -3,7 +3,7 @@ import { createFakeAI } from "./fakes.ts";
 import { embedAll, embedOne, extractVectors, isQuotaError, EMBED_DIM, BATCH_SIZE } from "../lib/embed.ts";
 import { createMemoryRepo, createMemoryVectorIndex } from "../lib/memory.ts";
 import { ingest } from "../lib/ingest.ts";
-import { retrieve, DEFAULT_MIN_SCORE } from "../lib/retrieve.ts";
+import { mergeResults, retrieve, DEFAULT_MIN_SCORE } from "../lib/retrieve.ts";
 
 const DOC_DEPLOY = `# 部署
 
@@ -218,6 +218,34 @@ describe("retrieve — 混合检索（关键词通道）", () => {
     const r = await retrieve({ queryVector: qv, query: q }, { repo, index }, { minScore: 0.9 });
     assertEqual(r.hits.length, 0, "单一泛词命中不足以作为回答依据");
     assert(r.nearest.length > 0, "该片段应落到 nearest（给用户看「最接近什么」）");
+  });
+
+  it("mergeResults：两路都命中的片段排最前，单路命中的按名次融合", async () => {
+    const { repo, index, ai } = await setupErr();
+    // 双路：改写查询命中错误码段，原始问题命中计费段
+    const qvA = await embedOne(ai, "ERR_1101 绑定缺失");
+    const qvB = await embedOne(ai, "计费 token");
+    const rA = await retrieve({ queryVector: qvA, query: "ERR_1101 绑定缺失" }, { repo, index }, { minScore: 0.05 });
+    const rB = await retrieve({ queryVector: qvB, query: "计费 token" }, { repo, index }, { minScore: 0.05 });
+    const merged = mergeResults(rA, rB, { topK: 6 });
+    assert(merged.hits.length >= 2, `合并后应有两路片段: ${merged.hits.length}`);
+    // 两路各自的 top1 都应保留在合并结果里（RRF 单路命中 = 1/(60+rank)，不会互相挤掉）
+    const ids = new Set(merged.hits.map((h) => h.chunk.id));
+    assert(ids.has(rA.hits[0].chunk.id), "改写路的 top1 应保留");
+    assert(ids.has(rB.hits[0].chunk.id), "原始问题的 top1 应保留");
+    const top = merged.hits[0];
+    assert((top.rrf ?? 0) >= 1 / (60 + 1), `融合分至少是单路 rank1: ${top.rrf}`);
+    // hits 与 nearest 不重叠
+    const hitIds = new Set(merged.hits.map((h) => h.chunk.id));
+    assert(merged.nearest.every((n) => !hitIds.has(n.chunk.id)), "nearest 不得与 hits 重叠");
+  });
+
+  it("mergeResults：空结果合并不炸", async () => {
+    const { repo, index, ai } = await setupErr();
+    const qv = await embedOne(ai, "量子色动力学的渐近自由");
+    const empty = await retrieve({ queryVector: qv, query: "量子色动力学的渐近自由" }, { repo, index }, { minScore: 0.9 });
+    const merged = mergeResults(empty, empty, { topK: 6 });
+    assertEqual(merged.hits.length, 0);
   });
 
   it("refused 的语义不变：nearest 只包含未过闸的片段", async () => {

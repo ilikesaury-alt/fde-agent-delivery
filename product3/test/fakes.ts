@@ -50,7 +50,7 @@ export function fakeEmbed(text: string): number[] {
 }
 
 /** 与 lib/ocr.ts 的 DEFAULT_OCR_MODEL 必须一致（单测有一条对账） */
-export const FAKE_OCR_MODEL = "@cf/moondream/moondream3.1-9B-A2B";
+export const FAKE_OCR_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 export const FAKE_OCR_TEXT = "扫描件正文：季度复盘要点。\n第二行：绑定与配额均已核验。";
 
 export type FakeAIOptions = {
@@ -72,14 +72,16 @@ export function createFakeAI(opts: FakeAIOptions = {}): AILike & { calls: Array<
       opts.onRun?.(model, texts.length);
       const err = opts.embedError?.();
       if (err) throw err;
-      // 二期视觉模型（OCR）通道：入参 { task, image, question }，返回 { answer }
+      // 二期视觉模型（OCR）通道：chat 形状入参（messages），返回 { description }
       if (model !== EMBED_MODEL) {
         if (model !== FAKE_OCR_MODEL) throw new Error(`unexpected model: ${model}`);
         const ocrErr = opts.ocr?.error?.();
         if (ocrErr) throw ocrErr;
+        // llama 形状：{ image: 字节数组, prompt }
         const image = input.image;
-        if (typeof image !== "string" || !image) throw new Error("OCR 入参缺 image");
-        return { answer: opts.ocr?.text ?? FAKE_OCR_TEXT };
+        const okImage = Array.isArray(image) ? image.length > 0 : typeof image === "string" && image.length > 0;
+        if (!okImage || typeof input.prompt !== "string") throw new Error("OCR 入参缺 image/prompt");
+        return { description: opts.ocr?.text ?? FAKE_OCR_TEXT };
       }
       return { data: texts.map((t) => fakeEmbed(t)) };
     },

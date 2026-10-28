@@ -392,7 +392,15 @@ export default function HomePage() {
         });
         const body = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
         if (res.ok && body.text) texts.push(body.text);
-        else failed.push(img.page);
+        else {
+          failed.push(img.page);
+          // 401 是环境问题（缺令牌），不是识别问题：单独提示，别混进「识别失败」
+          if (res.status === 401) {
+            setOcrRunning(false);
+            setOcrMsg({ kind: "err", text: "OCR 需要访问令牌：请在右上角填入令牌后重试。" });
+            return;
+          }
+        }
       }
       const merged = texts.join("\n\n").trim();
       if (merged) {

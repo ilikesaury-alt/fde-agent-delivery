@@ -23,6 +23,7 @@ import {
   KEYWORD_MIN_SELECTIVE_HITS,
   KEYWORD_POOL_LIMIT,
   KEYWORD_RRF_WEIGHT,
+  RRF_K,
   fuseRrf,
   queryTerms,
   rareDfThreshold,
@@ -67,6 +68,74 @@ export type RetrieveResult = {
   vectorHits: number;
   keywordHits: number;
 };
+
+/**
+ * 合并两次检索结果（多轮双路检索用）。
+ *
+ * 为什么需要（线上 M4 实测，2026-10-28）：改写锚点链式累积会把前几轮话题带进查询，
+ * 第三轮「那配额是怎么算的？」被稀释到误拒。双路检索（改写查询 + 原始问题各检索一次）
+ * 后原始问题永远参与，稀释不再致命；两路结果用 RRF 跨列表融合（两路都命中的排最前）。
+ *
+ * mergeResults 保持 retrieve 的出参形状：hits / nearest 互斥、按融合分降序、topK 截断。
+ */
+export function mergeResults(a: RetrieveResult, b: RetrieveResult, opts: { topK?: number } = {}): RetrieveResult {
+  const topK = opts.topK ?? a.topK;
+  const rankOf = (list: Hit[]) => new Map(list.map((h, i) => [h.chunk.id, i + 1]));
+  const rankA = rankOf(a.hits);
+  const rankB = rankOf(b.hits);
+
+  const byId = new Map<string, Hit>();
+  for (const h of [...a.hits, ...b.hits]) {
+    const cur = byId.get(h.chunk.id);
+    if (!cur) {
+      byId.set(h.chunk.id, { ...h, sources: [...(h.sources ?? [])] });
+      continue;
+    }
+    // 同一片段两路都命中：取更高的向量分、合并通道、保留更大 keywordScore
+    cur.score = Math.max(cur.score, h.score);
+    if (h.keywordScore != null) {
+      cur.keywordScore = cur.keywordScore == null ? h.keywordScore : Math.max(cur.keywordScore, h.keywordScore);
+    }
+    if (h.coverage != null) {
+      cur.coverage = cur.coverage == null ? h.coverage : Math.max(cur.coverage, h.coverage);
+    }
+    for (const src of h.sources ?? []) {
+      if (!cur.sources?.includes(src)) cur.sources?.push(src);
+    }
+    cur.codeMatched = cur.codeMatched || h.codeMatched;
+  }
+
+  const scored = [...byId.values()]
+    .map((h) => {
+      const ra = rankA.get(h.chunk.id);
+      const rb = rankB.get(h.chunk.id);
+      return { ...h, rrf: (ra ? 1 / (RRF_K + ra) : 0) + (rb ? 1 / (RRF_K + rb) : 0) };
+    })
+    .sort((x, y) => (y.rrf ?? 0) - (x.rrf ?? 0) || y.score - x.score || x.chunk.id.localeCompare(y.chunk.id));
+
+  const hits: Hit[] = scored.slice(0, topK).map(({ ...h }) => h);
+  const hitIds = new Set(hits.map((h) => h.chunk.id));
+
+  // nearest：两路「未过闸」的并集（去掉已进 hits 的），按向量分降序取 3
+  const nearestById = new Map<string, Hit>();
+  for (const h of [...a.nearest, ...b.nearest]) {
+    if (hitIds.has(h.chunk.id) || nearestById.has(h.chunk.id)) continue;
+    nearestById.set(h.chunk.id, h);
+  }
+  const nearest: Hit[] = [...nearestById.values()]
+    .sort((x, y) => y.score - x.score || x.chunk.id.localeCompare(y.chunk.id))
+    .slice(0, 3);
+
+  return {
+    hits,
+    nearest,
+    topK,
+    minScore: a.minScore,
+    hybrid: a.hybrid || b.hybrid,
+    vectorHits: a.vectorHits + b.vectorHits,
+    keywordHits: a.keywordHits + b.keywordHits,
+  };
+}
 
 /** 每个文档只查一次状态（避免 top-k × 文档 的 N+1） */
 function makeReadyChecker(repo: Repo): (docId: string) => Promise<boolean> {
