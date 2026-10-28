@@ -9,10 +9,18 @@
  *
  * 环境变量：
  *   AI_FAIL=quota | upstream   注入嵌入失败（验证失败路径与文案）
+ *   OCR_FAIL=quota | upstream  注入 OCR 失败（验证 429/502 映射）
+ *   OCR_TEXT=<文本>            覆盖 OCR 返回文本（E2E 断言用）
+ *   OCR_MODEL=<模型名>         覆盖视觉模型名（与 Worker 的 OCR_MODEL 对齐）
+ *
+ * 二期新增：视觉模型（OCR）通道。入参形状是 `{ task, image, question }`，
+ * 返回 `{ answer }` —— 与真 moondream 的 query 任务一致（已核对模型文档）。
  */
 
 export const EMBED_DIM = 1024;
 export const EMBED_MODEL = "@cf/baai/bge-m3";
+/** 与 lib/ocr.ts 的 DEFAULT_OCR_MODEL 必须一致（改动同步两处） */
+export const OCR_MODEL = "@cf/moondream/moondream3.1-9B-A2B";
 
 export function tokenize(text) {
   const norm = text.toLowerCase().replace(/\s+/g, " ");
@@ -51,15 +59,32 @@ export function fakeEmbed(text) {
 export function createAIshim() {
   /** @type {Array<{model: string, count: number}>} */
   const calls = [];
+  const ocrModel = process.env.OCR_MODEL || OCR_MODEL;
+  let ocrPages = 0;
 
   return {
     calls,
     async run(model, input) {
-      calls.push({ model, count: input.text.length });
+      const textCount = Array.isArray(input?.text) ? input.text.length : 1;
+      calls.push({ model, count: textCount });
+
+      // ── 视觉模型（OCR）通道 ──
+      if (model !== EMBED_MODEL) {
+        if (model !== ocrModel) throw new Error(`unexpected model: ${model}`);
+        const ocrFail = process.env.OCR_FAIL;
+        if (ocrFail === "quota") throw new Error("429 too many requests: neuron quota exceeded");
+        if (ocrFail === "upstream") throw new Error("upstream 500");
+        if (!input?.image || !input?.question) throw new Error("OCR 入参缺 image/question");
+        ocrPages++;
+        return {
+          answer: process.env.OCR_TEXT || `扫描件第 ${ocrPages} 页正文：季度复盘要点。
+第二行：绑定与配额均已核验。`,
+        };
+      }
+
       const fail = process.env.AI_FAIL;
       if (fail === "quota") throw new Error("429 too many requests: neuron quota exceeded");
       if (fail === "upstream") throw new Error("upstream 500");
-      if (model !== EMBED_MODEL) throw new Error(`unexpected model: ${model}`);
       return { data: input.text.map((t) => fakeEmbed(t)) };
     },
   };

@@ -8,7 +8,17 @@
  * 逼出「本地为了跑通而伪造 SQL」的假绿（产品② d1-shim 的教训）。
  */
 
-import type { Chunk, DocStatus, Document, DocumentSlim, DocSource, Hit, QaRecord } from "./types.ts";
+import type {
+  Chunk,
+  Conversation,
+  ConversationMessage,
+  DocStatus,
+  Document,
+  DocumentSlim,
+  DocSource,
+  Hit,
+  QaRecord,
+} from "./types.ts";
 
 export type D1Like = {
   prepare(sql: string): {
@@ -19,6 +29,9 @@ export type D1Like = {
     };
   };
 };
+
+/** 倒排检索的一行（dl = 所在 chunk 的文本长度，作为 BM25 的文档长度） */
+export type TermHitRow = { term: string; chunkId: string; tf: number; dl: number };
 
 export type NewDocument = {
   id: string;
@@ -48,7 +61,32 @@ export type Repo = {
   listChunksByDoc(docId: string): Promise<Chunk[]>;
   getChunksByIds(ids: string[]): Promise<Chunk[]>;
 
+  // ── 关键词倒排（二期混合检索，CONTEXT D20）────────────────────
+  /** 批量写入 term（调用方已按 chunk 截断到 MAX_TERMS_PER_CHUNK） */
+  insertChunkTerms(rows: Array<{ term: string; chunkId: string; tf: number }>): Promise<void>;
+  /** 倒排检索：返回每个 (term, chunk) 的 tf 与该 chunk 的文本长度（BM25 的 dl） */
+  searchTerms(terms: string[], limit?: number): Promise<TermHitRow[]>;
+  /** 库内可检索片段的规模统计（BM25 的 N 与 avgdl），只统计 ready 文档 */
+  chunkStats(): Promise<{ n: number; avgdl: number }>;
+
+  // ── 会话（二期多轮，CONTEXT D18/D19）──────────────────────────
+  insertConversation(c: { id: string; title: string; createdAt: number; updatedAt: number }): Promise<void>;
+  listConversations(limit?: number): Promise<Conversation[]>;
+  getConversation(id: string): Promise<Conversation | null>;
+  updateConversation(id: string, patch: { title?: string; updatedAt?: number }): Promise<void>;
+  /** 删除会话及其全部消息，返回被删消息数 */
+  deleteConversation(id: string): Promise<number>;
+
+  insertMessage(m: ConversationMessage): Promise<void>;
+  /** 会话内消息，**倒序**（最新在前；生成上下文时由调用方反转） */
+  listMessages(conversationId: string, limit?: number): Promise<ConversationMessage[]>;
+  /** 跨会话的最近消息（历史接口用，倒序） */
+  listRecentMessages(limit?: number): Promise<ConversationMessage[]>;
+
+  // ── 一期兼容（qa_history 停止写入，仅兼容读，见 CONTEXT D23）──
+  /** 一期写入口：保留给旧数据/测试夹具，路由不再调用 */
   insertQa(record: QaRecord): Promise<void>;
+  /** 兼容读 qa_history（旧记录）；二期新真源是 messages，见 listRecentMessages */
   listQa(limit?: number): Promise<QaRecord[]>;
 };
 
@@ -124,6 +162,67 @@ function rowToChunk(r: ChunkRow): Chunk {
   };
 }
 
+type ConvRow = {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  turn_count?: number | null;
+};
+
+type MsgRow = {
+  id: string;
+  conversation_id: string;
+  question: string;
+  answer_json: string | null;
+  cited_doc_ids: string | null;
+  refused: number | null;
+  retrieval_query: string | null;
+  created_at: number;
+};
+
+function rowToConversation(r: ConvRow): Conversation {
+  return {
+    id: r.id,
+    title: r.title ?? "",
+    turnCount: Number(r.turn_count ?? 0),
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  };
+}
+
+function parseIdList(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    // 单条坏数据不该让整页 500
+    return [];
+  }
+}
+
+function rowToMessage(r: MsgRow): ConversationMessage {
+  let result: ConversationMessage["result"] = { answer: "", citations: [], refused: false };
+  if (r.answer_json) {
+    try {
+      result = JSON.parse(r.answer_json) as ConversationMessage["result"];
+    } catch {
+      // 同上：坏数据降级为空结果
+    }
+  }
+  return {
+    id: r.id,
+    conversationId: r.conversation_id,
+    question: r.question,
+    result,
+    citedDocIds: parseIdList(r.cited_doc_ids),
+    refused: Number(r.refused ?? 0) === 1 || Boolean(result.refused),
+    retrievalQuery: r.retrieval_query ?? "",
+    createdAt: Number(r.created_at),
+  };
+}
+
 function rowToQa(r: QaRow): QaRecord {
   let result: QaRecord["result"] = { answer: "", citations: [], refused: false };
   if (r.answer_json) {
@@ -153,6 +252,50 @@ function rowToQa(r: QaRow): QaRecord {
 /** 列表列白名单：绝不 SELECT *（一次列表把全部正文搬进 Worker 是真实事故源） */
 const DOC_SLIM_COLUMNS =
   "id, source, source_ref, title, status, chunk_count, error, created_at, content_hash, indexed_at";
+
+/**
+ * 多值 INSERT 分批写入：D1 单语句参数有上限，逐行 INSERT 又会把一次导入变成
+ * 几百次往返。100 行/句 = 300 个占位符，是这两者之间的折中。
+ */
+async function insertTermRows(
+  db: D1Like,
+  rows: Array<{ term: string; chunkId: string; tf: number }>,
+  rowsPerStmt = 100,
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += rowsPerStmt) {
+    const slice = rows.slice(i, i + rowsPerStmt);
+    const values = slice.map(() => "(?, ?, ?)").join(", ");
+    const args = slice.flatMap((r) => [r.term, r.chunkId, r.tf]);
+    await db.prepare(`INSERT OR REPLACE INTO chunk_terms (term, chunk_id, tf) VALUES ${values}`).bind(...args).run();
+  }
+}
+
+/** 删除 chunk 时同步清倒排（否则关键词通道会召回已删文档的孤儿片段） */
+async function deleteTermsByChunkIds(db: D1Like, ids: string[], perStmt = 100): Promise<void> {
+  for (let i = 0; i < ids.length; i += perStmt) {
+    const slice = ids.slice(i, i + perStmt);
+    const holes = slice.map(() => "?").join(", ");
+    await db.prepare(`DELETE FROM chunk_terms WHERE chunk_id IN (${holes})`).bind(...slice).run();
+  }
+}
+
+/**
+ * 跨会话最近消息（`/api/history` 用）。
+ *
+ * JOIN conversations 是**必需的**：删会话不是事务（先删 messages 再删 conversation），
+ * 并发场景（A 标签页在流式作答、B 标签页删了会话）会留下指向已删会话的孤儿 message
+ * （cross-review 发现 #1）。这里从读侧兜住，孤儿行不会出现在历史里。
+ */
+async function selectRecentMessages(db: D1Like, limit: number): Promise<ConversationMessage[]> {
+  const res = await db
+    .prepare(
+      `SELECT m.* FROM messages m JOIN conversations c ON c.id = m.conversation_id
+        ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?`,
+    )
+    .bind(limit)
+    .all<MsgRow>();
+  return (res.results ?? []).map(rowToMessage);
+}
 
 export function createD1Repo(db: D1Like): Repo {
   return {
@@ -235,6 +378,7 @@ export function createD1Repo(db: D1Like): Repo {
     async deleteDocument(id) {
       const res = await db.prepare(`SELECT id FROM chunks WHERE doc_id = ?`).bind(id).all<{ id: string }>();
       const ids = (res.results ?? []).map((r) => r.id);
+      if (ids.length) await deleteTermsByChunkIds(db, ids);
       await db.prepare(`DELETE FROM chunks WHERE doc_id = ?`).bind(id).run();
       await db.prepare(`DELETE FROM documents WHERE id = ?`).bind(id).run();
       return ids;
@@ -264,6 +408,143 @@ export function createD1Repo(db: D1Like): Repo {
       const map = new Map((res.results ?? []).map((r) => [r.id, rowToChunk(r)]));
       // 保持传入顺序（调用方按相似度排好序，重排会破坏引用编号）
       return ids.map((id) => map.get(id)).filter((c): c is Chunk => Boolean(c));
+    },
+
+    async insertChunkTerms(rows) {
+      if (!rows.length) return;
+      await insertTermRows(db, rows);
+    },
+
+    async searchTerms(terms, limit = 5000) {
+      if (!terms.length) return [];
+      // ⚠️ 按 term 分别取行，而不是一条 `WHERE term IN (...)` 查询：
+      // 常见 bigram 的倒排行会整段吃掉全局 LIMIT 配额，导致罕见错误码被截断
+      // （cross-review 发现 #6）。每 term 的上限让「每个词都有机会被看到」。
+      const perTerm = Math.min(400, Math.max(50, Math.ceil(limit / terms.length)));
+      const rows = await Promise.all(
+        terms.map((term) =>
+          db
+            .prepare(
+              // dl 用 LENGTH(c.text) 作代理（0004 不加列，见迁移注释的幂等约束）
+              `SELECT t.term AS term, t.chunk_id AS chunkId, t.tf AS tf, LENGTH(c.text) AS dl
+                 FROM chunk_terms t JOIN chunks c ON c.id = t.chunk_id
+                WHERE t.term = ?
+                LIMIT ?`,
+            )
+            .bind(term, perTerm)
+            .all<{ term: string; chunkId: string; tf: number; dl: number }>(),
+        ),
+      );
+      return rows.flatMap((res) =>
+        (res.results ?? []).map((r) => ({
+          term: String(r.term),
+          chunkId: String(r.chunkId),
+          tf: Number(r.tf),
+          dl: Number(r.dl),
+        })),
+      );
+    },
+
+    async chunkStats() {
+      // 只统计 ready 文档：与 retrieve 的「只认 ready」同一口径
+      const row = await db
+        .prepare(
+          `SELECT COUNT(*) AS n, AVG(LENGTH(c.text)) AS avgdl
+             FROM chunks c JOIN documents d ON d.id = c.doc_id
+            WHERE d.status = 'ready'`,
+        )
+        .bind()
+        .first<{ n: number | null; avgdl: number | null }>();
+      return { n: Number(row?.n ?? 0), avgdl: Number(row?.avgdl ?? 0) };
+    },
+
+    async insertConversation(c) {
+      await db
+        .prepare(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
+        .bind(c.id, c.title, c.createdAt, c.updatedAt)
+        .run();
+    },
+
+    async listConversations(limit = 50) {
+      const res = await db
+        .prepare(
+          `SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS turn_count
+             FROM conversations c ORDER BY c.updated_at DESC LIMIT ?`,
+        )
+        .bind(limit)
+        .all<ConvRow>();
+      return (res.results ?? []).map(rowToConversation);
+    },
+
+    async getConversation(id) {
+      const row = await db
+        .prepare(
+          `SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS turn_count
+             FROM conversations c WHERE c.id = ?`,
+        )
+        .bind(id)
+        .first<ConvRow>();
+      return row ? rowToConversation(row) : null;
+    },
+
+    async updateConversation(id, patch) {
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      if (patch.title !== undefined) {
+        sets.push("title = ?");
+        args.push(patch.title);
+      }
+      if (patch.updatedAt !== undefined) {
+        sets.push("updated_at = ?");
+        args.push(patch.updatedAt);
+      }
+      if (!sets.length) return;
+      args.push(id);
+      await db.prepare(`UPDATE conversations SET ${sets.join(", ")} WHERE id = ?`).bind(...args).run();
+    },
+
+    async deleteConversation(id) {
+      const row = await db
+        .prepare(`SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?`)
+        .bind(id)
+        .first<{ n: number | null }>();
+      await db.prepare(`DELETE FROM messages WHERE conversation_id = ?`).bind(id).run();
+      await db.prepare(`DELETE FROM conversations WHERE id = ?`).bind(id).run();
+      return Number(row?.n ?? 0);
+    },
+
+    async insertMessage(m) {
+      await db
+        .prepare(
+          `INSERT INTO messages (id, conversation_id, question, answer_json, cited_doc_ids, refused, retrieval_query, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          m.id,
+          m.conversationId,
+          m.question,
+          JSON.stringify(m.result),
+          JSON.stringify(m.citedDocIds),
+          m.refused ? 1 : 0,
+          m.retrievalQuery,
+          m.createdAt,
+        )
+        .run();
+    },
+
+    async listMessages(conversationId, limit = 50) {
+      // rowid 兜住「同毫秒写入的两条消息」的先后（随机 id 排序会把正序打乱，cross-review 发现 #2）
+      const res = await db
+        .prepare(
+          `SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+        )
+        .bind(conversationId, limit)
+        .all<MsgRow>();
+      return (res.results ?? []).map(rowToMessage);
+    },
+
+    async listRecentMessages(limit = 50) {
+      return selectRecentMessages(db, limit);
     },
 
     async insertQa(record) {

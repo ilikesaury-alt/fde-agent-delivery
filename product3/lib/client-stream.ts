@@ -24,10 +24,21 @@ export type StepState = { step: StepName; status: StepStatus; detail?: string };
 export type { AskResult, Citation, NearestHit } from "./types.ts";
 import type { AskResult } from "./types.ts";
 
+export type AskDonePayload = {
+  result: AskResult;
+  /** 本轮所属会话（二期多轮：首次提问由服务端创建） */
+  conversationId?: string;
+  messageId?: string;
+  /** 兼容旧字段（= messageId） */
+  qaId?: string;
+  persisted: boolean;
+  warning?: string;
+};
+
 export type AskHandlers = {
   onStep?: (s: StepState) => void;
   onToken?: (text: string) => void;
-  onDone?: (payload: { result: AskResult; qaId?: string; persisted: boolean; warning?: string }) => void;
+  onDone?: (payload: AskDonePayload) => void;
   onError?: (payload: { phase?: string; message: string }) => void;
 };
 
@@ -37,7 +48,7 @@ export async function consumeAskStream(
   question: string,
   token: string,
   handlers: AskHandlers,
-  options: { signal?: AbortSignal; idleTimeoutMs?: number } = {},
+  options: { signal?: AbortSignal; idleTimeoutMs?: number; conversationId?: string | null } = {},
 ): Promise<void> {
   const controller = new AbortController();
   const external = options.signal;
@@ -73,7 +84,7 @@ export async function consumeAskStream(
     const res = await fetch("/api/ask", {
       method: "POST",
       headers,
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(options.conversationId ? { question, conversationId: options.conversationId } : { question }),
       signal: controller.signal,
     });
 
@@ -163,7 +174,7 @@ function dispatch(evt: ParsedEvent, handlers: AskHandlers, finish: (fn: () => vo
     return;
   }
   if (evt.event === "done") {
-    const d = evt.data as unknown as { result: AskResult; qaId?: string; persisted: boolean; warning?: string };
+    const d = evt.data as unknown as AskDonePayload;
     finish(() => handlers.onDone?.(d));
     return;
   }

@@ -25,8 +25,16 @@ export class EmbedError extends Error {
   }
 }
 
+/**
+ * Workers AI 绑定最小接口。
+ *
+ * 入参故意放宽成 `Record<string, unknown>`：二期多了**视觉模型**（OCR，入参
+ * `{ task, image, question }`），如果类型只允许 `{ text: string[] }`，OCR 就没法
+ * 复用同一个接口，只能各写一套绑定解析（本地还得再桩一套）。
+ * 代价是调用方要自己保证形状正确 —— 由 lib/ocr.ts / lib/embed.ts 各自封装负责。
+ */
 export type AILike = {
-  run(model: string, input: { text: string[] }): Promise<unknown>;
+  run(model: string, input: Record<string, unknown>): Promise<unknown>;
 };
 
 /** 从 Workers AI 返回值里取向量矩阵（不同模型返回形状略有差异，做容错） */

@@ -16,6 +16,21 @@ export function embedErrorText(code: "quota" | "upstream" | "empty"): string {
   }
 }
 
+export function ocrErrorText(code: "quota" | "upstream" | "empty" | "bad_image" | "too_large"): string {
+  switch (code) {
+    case "quota":
+      return "今日 OCR 识别额度已用尽（Workers AI 免费额度），请明日再试，或改用文字粘贴导入。";
+    case "bad_image":
+      return "图片格式不正确，只支持 png / jpeg / webp 的 base64 数据。";
+    case "too_large":
+      return "单页图片过大，请降低清晰度后重试。";
+    case "empty":
+      return "该页未识别出文字：请换一页重试，或用文字粘贴方式录入。";
+    default:
+      return "OCR 服务暂不可用，请稍后重试，或改用文字粘贴导入。";
+  }
+}
+
 export const ERR = {
   badJson: "请求体必须是 JSON。",
   missingField: (f: string) => `缺少字段 ${f}。`,
@@ -45,5 +60,19 @@ export const ERR = {
   historyFailed: "读取问答历史失败，请稍后重试。",
   indexWriteFailed: "索引写入失败，请稍后重试。",
   aiBindingMissing: "检索服务未就绪（缺少 Workers AI 绑定），请检查部署配置。",
-  sourceInvalid: "source 必须是 paste / file / pdf / url 之一。"
+  sourceInvalid: "source 必须是 paste / file / pdf / url 之一。",
+  // ── 二期：会话 / OCR / 索引探针 ──────────────────────────────
+  conversationNotFound: "会话不存在或已删除，请新建会话后重试。",
+  convListFailed: "读取会话列表失败，请稍后重试。",
+  convDeleteFailed: "删除会话失败，请稍后重试。",
+  messageListFailed: "读取会话消息失败，请稍后重试。",
+  ocrPageLimit: (n: number, max: number) =>
+    `单次最多识别 ${max} 页（本次请求 ${n} 页），请分批后再试。`,
+  ocrQuota: ocrErrorText("quota"),
+  ocrFailed: ocrErrorText("upstream"),
+  ocrEmpty: ocrErrorText("empty"),
+  ocrBadImage: ocrErrorText("bad_image"),
+  ocrTooLarge: ocrErrorText("too_large"),
+  probeNoChunks: "该文档没有可探测的片段（可能尚未切分完成）。",
+  probeNotVisible: "暂时还检索不到该文档的向量（索引仍在写入），请稍后再试。",
 } as const;

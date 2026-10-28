@@ -11,7 +11,11 @@
  *   node scripts/local-verify.mjs                 # 全量（E2E + 评测）
  *   node scripts/local-verify.mjs --e2e-only      # 只跑接口 E2E
  *   node scripts/local-verify.mjs --skip-eval     # 同上
+ *   node scripts/local-verify.mjs --eval-only      # 只跑评测（消融对比用，会跳过接口 E2E）
  *   node scripts/local-verify.mjs --min-score 0.05
+ *   --eval-port 8921   评测用独立 shim 端口（默认 SHIM_PORT+1，见下方说明）
+ *
+ * 消融对比：HYBRID_ENABLED=0 / CONTEXT_REWRITE=0 由外部环境透传给 shim（见 CONTEXT §11.1）。
  *
  * 退出码：0 全通过；非 0 有失败（可直接用于 CI 或 commit 前自检）。
  */
@@ -32,10 +36,17 @@ const value = (n, d) => {
 
 const LLM_PORT = Number(value("--llm-port", 3510));
 const SHIM_PORT = Number(value("--shim-port", 8920));
+/**
+ * 评测必须跑在**干净的库**上：flow-check 会往同一个 shim 里导入它自己的文档，
+ * 那些文档会改变检索排序，让评测指标从 100% 掉到 92.9%（不是代码回归，是数据污染 —— 实测踩过）。
+ * 所以评测单独起一个 shim 实例（同一个假上游），跑完随 cleanup 一起收掉。
+ */
+const EVAL_PORT = Number(value("--eval-port", SHIM_PORT + 1));
 const MIN_SCORE = value("--min-score", "0.05");
 /** 让流式有可观察窗口（浏览器冒烟的「取消」用例需要） */
 const CHUNK_DELAY = value("--chunk-delay", "20");
-const skipEval = flag("--eval-only") ? false : flag("--skip-eval");
+const evalOnly = flag("--eval-only");
+const skipEval = evalOnly ? false : flag("--skip-eval");
 const e2eOnly = flag("--e2e-only");
 
 const children = [];
@@ -120,6 +131,10 @@ async function main() {
     MAGPIE_API_KEY: "local-fake",
     MAGPIE_MODEL: "fake",
     RETRIEVE_MIN_SCORE: MIN_SCORE,
+    // 消融对比开关：从外部环境透传（未设置则用代码默认）
+    HYBRID_ENABLED: process.env.HYBRID_ENABLED,
+    CONTEXT_REWRITE: process.env.CONTEXT_REWRITE,
+    OCR_MODEL: process.env.OCR_MODEL,
   });
 
   const base = `http://127.0.0.1:${SHIM_PORT}`;
@@ -131,18 +146,40 @@ async function main() {
   }
   console.log(`  ✔ 健康检查通过：${base}/api/health\n`);
 
-  console.log("[3/4] 接口级 E2E");
-  const flowCode = await run(process.execPath, ["e2e/flow-check.mjs", base]);
-  if (flowCode !== 0) {
-    console.error("\n✖ 接口 E2E 失败，跳过评测（先修链路）");
-    cleanup();
-    process.exit(flowCode);
+  let flowCode = 0;
+  if (evalOnly) {
+    console.log("[3/4] 跳过接口 E2E（--eval-only：消融对比时只跑评测）");
+  } else {
+    console.log("[3/4] 接口级 E2E");
+    flowCode = await run(process.execPath, ["e2e/flow-check.mjs", base]);
+    if (flowCode !== 0) {
+      console.error("\n✖ 接口 E2E 失败，跳过评测（先修链路）");
+      cleanup();
+      process.exit(flowCode);
+    }
   }
 
   let evalCode = 0;
   if (!skipEval && !e2eOnly) {
-    console.log("\n[4/4] 评测（假嵌入，只验链路与指标计算）");
-    evalCode = await run(process.execPath, ["--experimental-strip-types", "eval/run.ts"], { BASE_URL: base });
+    // 评测跑在**干净的库**上：flow-check 已往主 shim 里导入它自己的文档，
+    // 那些文档会改变检索排序、让指标从 100% 掉到 92.9%（数据污染，不是代码回归）。
+    const evalBase = `http://127.0.0.1:${EVAL_PORT}`;
+    console.log(`\n[4/4] 评测（干净库；独立 shim :${EVAL_PORT}）`);
+    start("eval-shim", process.execPath, ["--import", "./e2e/bootstrap.mjs", "e2e/server.mjs", String(EVAL_PORT)], {
+      MAGPIE_BASE_URL: `http://127.0.0.1:${LLM_PORT}/v1`,
+      MAGPIE_API_KEY: "local-fake",
+      MAGPIE_MODEL: "fake",
+      RETRIEVE_MIN_SCORE: MIN_SCORE,
+      HYBRID_ENABLED: process.env.HYBRID_ENABLED,
+      CONTEXT_REWRITE: process.env.CONTEXT_REWRITE,
+      OCR_MODEL: process.env.OCR_MODEL,
+    });
+    if (!(await waitHealthy(`${evalBase}/api/health`))) {
+      console.error("✖ 评测用 shim 未就绪");
+      cleanup();
+      process.exit(1);
+    }
+    evalCode = await run(process.execPath, ["--experimental-strip-types", "eval/run.ts"], { BASE_URL: evalBase });
   } else {
     console.log("\n[4/4] 跳过评测");
   }

@@ -6,7 +6,8 @@
  */
 
 import { checkAccessToken } from "./auth.ts";
-import { DEFAULT_MIN_SCORE, DEFAULT_TOP_K } from "./retrieve.ts";
+import { DEFAULT_OCR_MODEL } from "./ocr.ts";
+import { DEFAULT_HYBRID, DEFAULT_MIN_SCORE, DEFAULT_TOP_K, type RetrieveOptions } from "./retrieve.ts";
 import type { AILike } from "./embed.ts";
 import type { LLMEnv } from "./llm.ts";
 import { createD1Repo, createVectorizeIndex, type D1Like, type Repo, type VectorIndex, type VectorizeLike } from "./repo.ts";
@@ -29,6 +30,12 @@ export type ResolvedEnv = LLMEnv & {
   ACCESS_TOKEN?: string;
   RETRIEVE_TOP_K?: string;
   RETRIEVE_MIN_SCORE?: string;
+  /** "0" 关闭关键词通道（消融开关，见 CONTEXT A3） */
+  HYBRID_ENABLED?: string;
+  /** "0" 关闭多轮规则改写（消融开关，见 CONTEXT D18） */
+  CONTEXT_REWRITE?: string;
+  /** 覆盖 OCR 视觉模型（默认 @cf/moondream/moondream3.1-9B-A2B） */
+  OCR_MODEL?: string;
 };
 
 export function asString(v: unknown): string | undefined {
@@ -44,6 +51,33 @@ export function resolveEnv(c: unknown): ResolvedEnv {
     ACCESS_TOKEN: asString(e.ACCESS_TOKEN),
     RETRIEVE_TOP_K: asString(e.RETRIEVE_TOP_K),
     RETRIEVE_MIN_SCORE: asString(e.RETRIEVE_MIN_SCORE),
+    HYBRID_ENABLED: asString(e.HYBRID_ENABLED),
+    CONTEXT_REWRITE: asString(e.CONTEXT_REWRITE),
+    OCR_MODEL: asString(e.OCR_MODEL),
+  };
+}
+
+/** 环境变量开关：只认 "0"/"false"/"off" 为关闭，其余（含未配置）一律开启 */
+function flag(v: string | undefined, fallback: boolean): boolean {
+  if (v == null || v === "") return fallback;
+  return !/^(0|false|off|no)$/i.test(v.trim());
+}
+
+export type FeatureFlags = {
+  /** 关键词通道（A3 消融开关） */
+  hybrid: boolean;
+  /** 多轮规则改写（D18 消融开关） */
+  contextRewrite: boolean;
+  /** OCR 视觉模型（D21） */
+  ocrModel: string;
+};
+
+export function resolveFlags(c: unknown): FeatureFlags {
+  const e = resolveEnv(c);
+  return {
+    hybrid: flag(e.HYBRID_ENABLED, DEFAULT_HYBRID),
+    contextRewrite: flag(e.CONTEXT_REWRITE, true),
+    ocrModel: e.OCR_MODEL?.trim() || DEFAULT_OCR_MODEL,
   };
 }
 
@@ -85,12 +119,13 @@ export function authorize(c: unknown, header: string | undefined): Response | nu
 }
 
 /** 解析检索参数（env 可覆盖，便于评测扫阈值） */
-export function resolveRetrieveOptions(c: unknown): { topK: number; minScore: number } {
+export function resolveRetrieveOptions(c: unknown): RetrieveOptions {
   const e = resolveEnv(c);
   const topK = Number(e.RETRIEVE_TOP_K);
   const minScore = Number(e.RETRIEVE_MIN_SCORE);
   return {
     topK: Number.isFinite(topK) && topK > 0 ? Math.min(Math.trunc(topK), 20) : DEFAULT_TOP_K,
     minScore: Number.isFinite(minScore) && minScore >= 0 && minScore <= 1 ? minScore : DEFAULT_MIN_SCORE,
+    hybrid: flag(e.HYBRID_ENABLED, DEFAULT_HYBRID),
   };
 }

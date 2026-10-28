@@ -49,24 +49,39 @@ export function fakeEmbed(text: string): number[] {
   return v.map((x) => x / norm);
 }
 
+/** 与 lib/ocr.ts 的 DEFAULT_OCR_MODEL 必须一致（单测有一条对账） */
+export const FAKE_OCR_MODEL = "@cf/moondream/moondream3.1-9B-A2B";
+export const FAKE_OCR_TEXT = "扫描件正文：季度复盘要点。\n第二行：绑定与配额均已核验。";
+
 export type FakeAIOptions = {
   /** 嵌入时抛错（测配额/上游异常路径） */
   embedError?: () => Error | null;
   /** 每次 run 的调用计数（测分批） */
   onRun?: (model: string, count: number) => void;
+  /** 视觉模型（OCR）返回，或抛错（typo：默认返回「已识别文本」） */
+  ocr?: { text?: string; error?: () => Error | null };
 };
 
 export function createFakeAI(opts: FakeAIOptions = {}): AILike & { calls: Array<{ model: string; count: number }> } {
   const calls: Array<{ model: string; count: number }> = [];
   return {
     calls,
-    async run(model, input) {
-      calls.push({ model, count: input.text.length });
-      opts.onRun?.(model, input.text.length);
+    async run(model: string, input: Record<string, unknown>) {
+      const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+      calls.push({ model, count: texts.length });
+      opts.onRun?.(model, texts.length);
       const err = opts.embedError?.();
       if (err) throw err;
-      if (model !== EMBED_MODEL) throw new Error(`unexpected model: ${model}`);
-      return { data: input.text.map((t) => fakeEmbed(t)) };
+      // 二期视觉模型（OCR）通道：入参 { task, image, question }，返回 { answer }
+      if (model !== EMBED_MODEL) {
+        if (model !== FAKE_OCR_MODEL) throw new Error(`unexpected model: ${model}`);
+        const ocrErr = opts.ocr?.error?.();
+        if (ocrErr) throw ocrErr;
+        const image = input.image;
+        if (typeof image !== "string" || !image) throw new Error("OCR 入参缺 image");
+        return { answer: opts.ocr?.text ?? FAKE_OCR_TEXT };
+      }
+      return { data: texts.map((t) => fakeEmbed(t)) };
     },
   };
 }

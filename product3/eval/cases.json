@@ -133,6 +133,20 @@
       "expectDoc": null,
       "expectKeyword": null,
       "shouldRefuse": true
+    },
+    {
+      "id": "q20",
+      "question": "ERR_1101 是什么错误？",
+      "expectDoc": "04-故障处理",
+      "expectKeyword": "1101",
+      "shouldRefuse": false
+    },
+    {
+      "id": "q21",
+      "question": "ERR_3307 应该怎么处理？",
+      "expectDoc": "04-故障处理",
+      "expectKeyword": "3307",
+      "shouldRefuse": false
     }
   ]
 }

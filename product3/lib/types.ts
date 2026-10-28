@@ -32,10 +32,24 @@ export type Chunk = {
   createdAt: number;
 };
 
-/** 检索命中：chunk + 相似度 */
+/** 命中来自哪条通道（混合检索：向量 / 关键词，可能叠加） */
+export type HitSource = "vector" | "keyword";
+
+/** 检索命中：chunk + 相似度（+ 混合检索的通道与名次信息） */
 export type Hit = {
   chunk: Chunk;
+  /** 向量相似度（关键词单独命中时为 0，不要拿它当「是否相关」的唯一判据） */
   score: number;
+  /** 命中通道；一期只有 vector */
+  sources?: HitSource[];
+  /** 关键词通道的 BM25 分（无关键词命中时为空） */
+  keywordScore?: number;
+  /** 查询 term 覆盖率 0–1（对库内词表，关键词通道的入池判据） */
+  coverage?: number;
+  /** 命中项里的最小 df（越小越罕见；罕见词是关键词通道的价值来源） */
+  minDf?: number;
+  /** RRF 融合分（两路名次倒数之和） */
+  rrf?: number;
 };
 
 /** 引用块（返回给前端 / 落库） */
@@ -48,6 +62,8 @@ export type Citation = {
   /** 片段原文（截断展示） */
   snippet: string;
   score: number;
+  /** 这条引用是靠向量相似度还是关键词命中的（前端据此换展示文案） */
+  matchedBy?: HitSource;
 };
 
 /** 拒答时展示的「最相近片段」（未通过阈值） */
@@ -57,6 +73,9 @@ export type NearestHit = {
   headingPath: string;
   snippet: string;
   score: number;
+  /** 该片段没通过闸的原因：向量分太低，还是关键词覆盖率不够 */
+  matchedBy?: HitSource;
+  coverage?: number;
 };
 
 export type AskResult = {
@@ -72,6 +91,10 @@ export type AskResult = {
    * 用户会判定成「上传失败 / 搜索坏了」。
    */
   indexingRecently?: boolean;
+  /** 本次真正拿去检索的查询（多轮时可能是规则改写后的拼接查询，可观测/可核对） */
+  retrievalQuery?: string;
+  /** 检索查询是否被多轮上下文改写 */
+  rewritten?: boolean;
 };
 
 export type QaRecord = {
@@ -79,6 +102,29 @@ export type QaRecord = {
   question: string;
   result: AskResult;
   citedDocIds: string[];
+  createdAt: number;
+};
+
+/** 会话（一次连续追问 = 一个会话，标题取首问截断） */
+export type Conversation = {
+  id: string;
+  title: string;
+  /** 轮数（messages 行数），列表展示用 */
+  turnCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** 会话内的一轮问答（二期新真源；一行 = 一问一答） */
+export type ConversationMessage = {
+  id: string;
+  conversationId: string;
+  question: string;
+  result: AskResult;
+  citedDocIds: string[];
+  refused: boolean;
+  /** 规则改写后真正用于检索的查询（为空表示与 question 一致） */
+  retrievalQuery: string;
   createdAt: number;
 };
 

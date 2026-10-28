@@ -11,13 +11,24 @@
  * 让检索/拒答/引用的业务逻辑在本地就能被真实测到。
  */
 
-import type { Chunk, Document, DocumentSlim, QaRecord } from "./types.ts";
-import type { Repo, VectorIndex } from "./repo.ts";
+import type { Chunk, Conversation, ConversationMessage, Document, DocumentSlim, QaRecord } from "./types.ts";
+import type { Repo, TermHitRow, VectorIndex } from "./repo.ts";
 
-export function createMemoryRepo(): Repo & { __documents: Map<string, Document>; __chunks: Map<string, Chunk>; __qa: QaRecord[] } {
+export function createMemoryRepo(): Repo & {
+  __documents: Map<string, Document>;
+  __chunks: Map<string, Chunk>;
+  __qa: QaRecord[];
+  __terms: Map<string, Map<string, number>>;
+  __conversations: Map<string, Conversation>;
+  __messages: ConversationMessage[];
+} {
   const documents = new Map<string, Document>();
   const chunks = new Map<string, Chunk>();
   const qa: QaRecord[] = [];
+  /** term → (chunkId → tf)：与 D1 的 chunk_terms 同语义 */
+  const terms = new Map<string, Map<string, number>>();
+  const conversations = new Map<string, Conversation>();
+  const messages: ConversationMessage[] = [];
 
   const slim = (d: Document): DocumentSlim => {
     const { contentHash: _h, ...rest } = d;
@@ -29,6 +40,9 @@ export function createMemoryRepo(): Repo & { __documents: Map<string, Document>;
     __documents: documents,
     __chunks: chunks,
     __qa: qa,
+    __terms: terms,
+    __conversations: conversations,
+    __messages: messages,
 
     async insertDocument(doc) {
       documents.set(doc.id, { ...doc, status: "pending", chunkCount: 0, error: null });
@@ -61,6 +75,11 @@ export function createMemoryRepo(): Repo & { __documents: Map<string, Document>;
     async deleteDocument(id) {
       const ids = [...chunks.values()].filter((c) => c.docId === id).map((c) => c.id);
       for (const cid of ids) chunks.delete(cid);
+      // 倒排跟着 chunk 一起走（与 D1 实现同语义）
+      for (const [term, posting] of terms) {
+        for (const cid of ids) posting.delete(cid);
+        if (!posting.size) terms.delete(term);
+      }
       documents.delete(id);
       return ids;
     },
@@ -73,6 +92,85 @@ export function createMemoryRepo(): Repo & { __documents: Map<string, Document>;
     async getChunksByIds(ids) {
       return ids.map((id) => chunks.get(id)).filter((c): c is Chunk => Boolean(c));
     },
+    async insertChunkTerms(rows) {
+      for (const r of rows) {
+        const posting = terms.get(r.term) ?? new Map<string, number>();
+        posting.set(r.chunkId, r.tf);
+        terms.set(r.term, posting);
+      }
+    },
+    async searchTerms(list, limit = 5000) {
+      const out: TermHitRow[] = [];
+      // 与 D1 实现同一口径：每个 term 各自限量，避免常见词吃掉全部配额
+      const perTerm = Math.min(400, Math.max(50, Math.ceil(limit / Math.max(list.length, 1))));
+      for (const term of list) {
+        const posting = terms.get(term);
+        if (!posting) continue;
+        let taken = 0;
+        for (const [chunkId, tf] of posting) {
+          const chunk = chunks.get(chunkId);
+          if (!chunk) continue;
+          out.push({ term, chunkId, tf, dl: chunk.text.length });
+          if (++taken >= perTerm) break;
+        }
+      }
+      return out;
+    },
+    async chunkStats() {
+      const ready = new Set(
+        [...documents.values()].filter((d) => d.status === "ready").map((d) => d.id),
+      );
+      const list = [...chunks.values()].filter((c) => ready.has(c.docId));
+      const total = list.reduce((sum, c) => sum + c.text.length, 0);
+      return { n: list.length, avgdl: list.length ? total / list.length : 0 };
+    },
+
+    async insertConversation(c) {
+      conversations.set(c.id, { ...c, turnCount: 0 });
+    },
+    async listConversations(limit = 50) {
+      return [...conversations.values()]
+        .map((c) => ({ ...c, turnCount: messages.filter((m) => m.conversationId === c.id).length }))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit);
+    },
+    async getConversation(id) {
+      const c = conversations.get(id);
+      if (!c) return null;
+      return { ...c, turnCount: messages.filter((m) => m.conversationId === id).length };
+    },
+    async updateConversation(id, patch) {
+      const c = conversations.get(id);
+      if (!c) return;
+      if (patch.title !== undefined) c.title = patch.title;
+      if (patch.updatedAt !== undefined) c.updatedAt = patch.updatedAt;
+    },
+    async deleteConversation(id) {
+      const n = messages.filter((m) => m.conversationId === id).length;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].conversationId === id) messages.splice(i, 1);
+      }
+      conversations.delete(id);
+      return n;
+    },
+
+    async insertMessage(m) {
+      messages.push(m);
+    },
+    async listMessages(conversationId, limit = 50) {
+      return messages
+        .filter((m) => m.conversationId === conversationId)
+        .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
+        .slice(0, limit);
+    },
+    async listRecentMessages(limit = 50) {
+      // 孤儿消息（会话已删）不计入，与 D1 实现的 JOIN 同语义
+      return [...messages]
+        .filter((m) => conversations.has(m.conversationId))
+        .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
+        .slice(0, limit);
+    },
+
     async insertQa(record) {
       qa.push(record);
     },

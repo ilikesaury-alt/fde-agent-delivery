@@ -22,6 +22,7 @@ import { embedAll } from "./embed.ts";
 import type { AILike } from "./embed.ts";
 import { ERR } from "./errors.ts";
 import { normalizeText, sha256Hex } from "./hash.ts";
+import { extractTerms } from "./hybrid.ts";
 import { awaitVectorAcceptance, type Repo, type VectorIndex } from "./repo.ts";
 import type { Chunk, Document, DocSource } from "./types.ts";
 
@@ -209,6 +210,11 @@ export async function ingest(deps: IngestDeps, input: IngestInput): Promise<Inge
     }
 
     await deps.repo.insertChunks(chunks);
+    // 关键词倒排（二期混合检索）：与 chunk 同批写，失败走同一补偿路径。
+    // 每 chunk 只取 tf 最高的 24 个 term（体积约束，见 lib/hybrid.ts）。
+    await deps.repo.insertChunkTerms(
+      chunks.flatMap((c) => extractTerms(c.text).map((t) => ({ term: t.term, chunkId: c.id, tf: t.tf }))),
+    );
     await deps.index.upsert(
       chunks.map((c, i) => ({
         id: c.id,

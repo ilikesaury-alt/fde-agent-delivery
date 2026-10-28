@@ -1,90 +1,111 @@
 # HANDOFF · kb-ask（产品③ 企业知识库问答）
 
 > **面向**：接手这个功能的下一个开发会话（冷启动入口）。回答「从哪接着干」，不重复讲实现细节。
-> **当前 revision**：`9863237` + 本文件所在未提交改动。**已上线且线上 E2E 12/12 通过**：version `74ca217b-f759-436a-97c6-99604b52f683`。
-> **需求与验收**：[`product3/CONTEXT.md`](../CONTEXT.md)（§5 验收标准、§8 交叉审查处置、§9 验收证据）
-> **交付文档**：[`product3/docs/features/kb-ask/kb-ask-交付文档.md`](./features/kb-ask/kb-ask-交付文档.md)
+> **当前 revision**：`0548497` + 工作区**未提交改动**（二期全部代码与文档，见 `git status`）。线上仍是 v1 版本 `74ca217b`，**二期尚未部署**。
+> **需求与验收**：[`product3/CONTEXT.md`](../CONTEXT.md)（§10–§12 是二期口径与证据，§1–§9 是一期）
+> **交付文档**：[`product3/docs/features/kb-ask/kb-ask-交付文档.md`](./features/kb-ask/kb-ask-交付文档.md)（§7 起为二期）
+> **工作原理**：[`product3/docs/features/kb-ask/kb-ask-工作原理.md`](./features/kb-ask/kb-ask-工作原理.md)（§10 为二期）
 
 ---
 
 ## 1. 一句话现状
 
-本地全链路全绿（单测 96、接口 E2E 32、浏览器冒烟 18、评测达标），**且已上线并跑通线上 E2E 12/12**（真 bge-m3 + 真 Vectorize + 真 magpie，引用 score 0.737）。
+一期已上线且线上 E2E 通过（真 bge-m3 + 真 Vectorize + 真 magpie，version `74ca217b`）。
+二期（多轮对话 / 会话侧栏 / 混合检索 / 扫描件 OCR / 索引延迟提示）**本地全绿、未部署**：
 
-⚠️ 首次上线时功能完全不可用，暴露了 4 个只在线下测不到的缺陷（query 参数被拒、getByIds 不可作回读判据、Vectorize upsert 是异步的、阈值默认值有第二份硬编码）——完整复盘与修复见 [deploy-kb-ask.md](./deploy-kb-ask.md) §5。**这是本产品最值得读的一段。**
+- `npm run typecheck` 0 error · `npm test` **199 通过 0 失败**
+- `npm run build` 成功（产物仍含 `ai` / `vectorize` / `d1_databases`）
+- `npm run verify:local` 通过：接口 E2E **63/63** + 评测达标（21 例，Recall 100% / 拒答 100% / 误拒 17.6% / 引用准确 100%，评测跑在独立 shim 上）
+- 浏览器冒烟 **33/33**（`product3/docs/e2e-evidence/ui-smoke.log`）
 
-## 2. 关键文件地图
+⚠️ **部署前必须先应用 `0004` 迁移**，否则会话/倒排表不存在、新接口 500。
+
+## 2. 关键文件地图（二期新增/改造标 ★）
 
 | 路径 | 职责 | 改它会影响 |
 |---|---|---|
-| `lib/ingest.ts` | 导入管道：切分→容量→嵌入→写库→回读校验→替换收尾 | 幂等、替换语义、失败补偿（**改动前先读文件头的「顺序铁律」**） |
+| `lib/ingest.ts` ★ | 导入管道：切分→容量→嵌入→写库（**含倒排**）→回读校验→替换收尾 | 幂等、替换语义、失败补偿（**改动前先读文件头的「顺序铁律」**） |
 | `lib/chunk.ts` | 结构化切分（headingPath） | 检索质量、引用位置可读性 |
-| `lib/embed.ts` | Workers AI `bge-m3`，分批（8/批）+ 配额错误识别 | 嵌入预算、失败文案 |
-| `lib/retrieve.ts` | 向量 top-k + 阈值分流 + **只认 status=ready 的文档** | 拒答率、是否能引用到失败文档 |
-| `lib/answer.ts` | grounded prompt（注入防护 + 依据不足标记）、引用编号解析 | 防幻觉、引用准确性 |
-| `lib/repo.ts` | `Repo` + `VectorIndex` 双接口，D1 / Vectorize / 内存三种后端 | 线上与本地一致性 |
-| `lib/fetch-article.ts` | URL 抓取 + SSRF 三道闸（含尾点规范化） | 安全边界 |
-| `lib/pdf.ts` | 浏览器端 PDF 抽文本 | PDF 导入体验 |
-| `routes/api/{documents,ask,history,health}.ts` | 四类接口 | 契约与错误码 |
-| `pages/index.tsx` | 双栏工作台 UI（含 `data-testid`） | 冒烟脚本依赖这些 testid |
-| `e2e/{server,ai-shim,vec-shim,d1-shim,fake-llm}.mjs` | 本地替身：Node shim + 假 AI + 内存向量 + 假 LLM | 本地验证能力 |
-| `e2e/flow-check.mjs` / `e2e/smoke-ui.mjs` | 接口级 E2E / 浏览器冒烟 | 回归门禁 |
-| `eval/{run.ts,cases.json,corpus/}` | 评测集与指标脚本 | 阈值标定依据 |
-| `db/migrations/0001,0002` | 表结构 + `content_hash` 唯一索引 | 部署时必须先应用 |
+| `lib/embed.ts` ★ | Workers AI `bge-m3`，分批（8/批）+ 配额错误识别；`AILike` 入参放宽以支持视觉模型 | 嵌入预算、OCR 复用同一绑定 |
+| `lib/hybrid.ts` ★新增 | 分词/停用表/TF 截断（code-like 必留）/BM25/idf 覆盖率/罕见词判定/RRF | 关键词通道的全部行为；改动需重跑 eval 消融 |
+| `lib/retrieve.ts` ★ | 向量 + 关键词双通道、加权 RRF、过闸分流、只认 `status=ready` | 拒答率、引用排序 |
+| `lib/conversation.ts` ★新增 | 指代判定、规则拼接改写、会话标题、历史上下文块 | 多轮检索质量与「跨轮幻觉继承」防线 |
+| `lib/ocr.ts` ★新增 | 视觉模型调用、返回体容错解析、配额映射、dataURL 校验 | 扫描件识别与错误文案 |
+| `lib/pdf.ts` ★ | 前端 PDF 抽文本 + **页图渲染**（OCR 用） | PDF 导入体验、OCR 入口 |
+| `lib/repo.ts` ★ | `Repo` 双接口 + D1 实现（新增 conversations/messages/chunk_terms + `listRecentMessages`） | 线上与本地一致性 |
+| `lib/memory.ts` ★ | 内存实现（同套契约测试的另一侧） | 单测与 shim 行为 |
+| `routes/api/ask.ts` ★ | SSE 问答；**多轮**：读历史 → 改写 → 检索 → 生成带历史块 → 落 messages | 会话契约、拒答、落库 |
+| `routes/api/conversations.ts` ★新增 | 会话列表 / 详情 / 删除 | 侧栏 UI |
+| `routes/api/ocr.ts` ★新增 | 单页 OCR（dataURL only） | 扫描件导入 |
+| `routes/api/probe.ts` ★新增 | 索引可见性探针（真检索自身） | 索引延迟提示的诚实性 |
+| `routes/api/history.ts` ★ | 改读 `messages`；`?includeLegacy=1` 才带一期 `qa_history` | 历史口径（CONTEXT D23） |
+| `pages/index.tsx` ★ | 三区：左文档（含徽标/检测/OCR）、会话侧栏、消息流 | 冒烟脚本依赖 `data-testid` |
+| `e2e/{ai-shim,server,flow-check,smoke-ui}.mjs` ★ | 本地替身与门禁（ai-shim 增加 OCR 分支；flow-check 到 §12） | 本地验证能力 |
+| `e2e/serve-for-smoke.mjs` ★新增 | 常驻假上游 + shim，供 ego-browser 冒烟期间使用 | 冒烟前置 |
+| `eval/{cases.json,corpus/04-故障处理.md}` ★ | 21 例（新增 q20/q21 错误码用例） | 消融证据、阈值标定 |
+| `db/migrations/0004_conversations_hybrid.sql` ★新增 | 三张新表（仅 `CREATE ... IF NOT EXISTS`，幂等） | 部署必须先 apply |
 
 ## 3. 复现验证命令
 
 ```bash
 cd product3
 
-# 静态与单测
-npm run typecheck          # 期望 exit 0
-npm test                   # 期望 通过 93 · 失败 0
-npm run build              # 期望成功，且 dist/ssr/wrangler.json 含 ai 与 vectorize
+npm run typecheck          # 期望 0 error
+npm test                   # 期望 通过 199 · 失败 0
+npm run build              # 期望成功，dist/ssr/wrangler.json 含 ai / vectorize / d1_databases
 
-# 本地全量验证（一条命令：起假上游 + shim → E2E → 评测 → 自动清理）
-npm run verify:local                        # 期望 exit 0
-npm run verify:local:e2e                    # 只跑接口 E2E（跳过评测）
+npm run verify:local       # 一条命令：假上游 + shim → 接口 E2E(63) → 评测 → 自动清理
+npm run verify:local:e2e   # 只跑接口 E2E
 
-# 需要手工调试时（分开起，端口可自定义）
-node e2e/fake-llm.mjs 3510
-MAGPIE_BASE_URL=http://127.0.0.1:3510/v1 MAGPIE_API_KEY=fake \
-  RETRIEVE_MIN_SCORE=0.05 node --import ./e2e/bootstrap.mjs e2e/server.mjs 8920
-node e2e/flow-check.mjs http://127.0.0.1:8920
-BASE_URL=http://127.0.0.1:8920 npm run eval
+# 消融对比（CONTEXT §12.1 的两个数字就是这么来的）
+node scripts/local-verify.mjs --eval-only                      # 混合检索开：Recall 100%
+HYBRID_ENABLED=0 node scripts/local-verify.mjs --eval-only      # 混合检索关：Recall 85.7%
 
-# 浏览器冒烟（需 ego-browser；注意脚本里的 BASE 端口要与 shim 一致）
+# 浏览器冒烟（需 ego-browser；**先起栈，且每轮重启保证内存库干净**）
+node e2e/serve-for-smoke.mjs &        # 或另开终端常驻
 ego-browser nodejs < e2e/smoke-ui.mjs
 ```
 
-> 沙箱注意：`vite dev` 不可用（workerd 不能 spawn），本地一律走 `e2e/server.mjs`；
-> `npm install` 需 `--ignore-scripts`。截图偶发 CDP 超时属环境问题，不影响断言。
+> 沙箱注意：`vite dev` 不可用（workerd 无法 spawn），本地一律走 `e2e/server.mjs`；`npm install` 需 `--ignore-scripts`。
+> 冒烟前必须重启 shim（内存库会累积），否则会撞「已跳过重复导入」的假失败；截图偶发失败属 ego 环境问题（断言仍是 DOM 断言）。
 
 ## 4. 未解决问题（按优先级）
 
-1. ~~线上部署~~ → **已完成**（2026-10-28）：见 [deploy-kb-ask.md](./deploy-kb-ask.md)。剩余：在你本机跑线上 flow-check / eval / 浏览器用例。
-2. **阈值未标定**：`RETRIEVE_MIN_SCORE` 基线 0.35 来自假嵌入，必须用线上真 `bge-m3` 跑 `npm run eval` 扫曲线后写死（CONTEXT D16）。
-3. **PDF 未用真实文件验证**：只覆盖了代码路径与错误分支；扫描件分支未经真实文件验证。
-4. **问答历史无 UI**：`GET /api/history` 已可用，`pages/index.tsx` 未展示。
-5. **令牌默认放行（fail-open）**：未配 `ACCESS_TOKEN` 时接口对公网完全开放。本产品会暴露文档全文列表与删除操作，**上线前必须配**；若要做成默认安全，需要改 `lib/auth.ts` 的默认语义（会影响产品①② 的既有口径，属跨产品决策）。
-6. **`eval` 会污染知识库**：评测脚本会把 4 篇示例文档写入目标库，跑完需手工删除或改用独立实例。
+1. **部署 + 迁移**：先 `npx wrangler d1 migrations apply kb-ask-db --remote`，再 `npm run deploy`；部署后核验四绑定 + 新接口（详见交付文档 §10）。
+2. **阈值仍未用真模型标定**（一期遗留 D16）：`RETRIEVE_MIN_SCORE` 现值 0.45 是线上真模型下的估值，二期新增的**关键词通道参数**（罕见词比例、RRF 权重、code 加权）同样只在假嵌入下验证过 —— 上线后必须用 `npm run eval` 在真环境重跑并按 §12.1 表格对账。
+3. **OCR 中文质量未验证**：本地只有假模型；真实 moondream 对中文扫描件的识别质量必须线上实测（交付文档 M2）。质量不达标时用 `OCR_MODEL` 换模型，代码不用改。
+4. **会话无用户隔离**：仍是单用户令牌；`ACCESS_TOKEN` 未配置即对公网开放（一期遗留，本产品数据更敏感）。
+5. **手动跑 `npm run eval` 仍会污染目标库**：它会把 4 篇示例文档写进目标库（`verify:local` 已改为给评测起独立 shim，自动流程不受影响；手工打线上时跑完要删）。
+6. **误拒率 17.6%**（假嵌入尺度）：与一期同量级，但真模型下的拒答/误拒平衡未测。
+
+## 7. 本期踩到的坑（下次省时间）
+
+1. **`page.waitForFunction` 的谓词在页面里执行，取不到 Node 侧闭包变量**：`length < beforeConv` 里 `beforeConv` 是 `undefined`，条件恒 false —— 浏览器冒烟的「删除会话」断言因此假失败半小时。要用 `new Function` 把目标值内联进函数体。
+2. **ego `page.click` 要求元素在视口内**：长页面下方的按钮会报 `element is not visible in the viewport`（不是产品缺陷）。统一改成 `evaluate(() => el.click())`，断言仍落在点击后的 DOM 上。
+3. **冒烟前必须重启 shim**：内存库会累积，同内容第二次导入走「已跳过」，`导入成功` 类断言会假失败。`node e2e/serve-for-smoke.mjs` 起栈、跑完 kill。
+4. **flow-check 会污染 eval 指标**：同一 shim 里先跑接口 E2E 再跑评测，指标会从 100% 掉到 92.9%；`local-verify.mjs` 现在给评测单独起一个 shim。
+5. **`cargo`-式教训：参数要由评测驱动，不要拍脑袋**：本轮混合检索改了 5 轮（等权 RRF → 加权 → code-like 加权 → 罕见词入池 → 影响力闸门），每一版都用 21 例 eval + 消融对比验，才没把 q06 的 Recall 打下去。
 
 ## 5. 猜测 vs 已验证（明确分开）
 
-**已验证（有证据）**：
-- Void 1.2.1 会把 `cloudflare.ai` 与 `cloudflare.vectorize` 透传进 `dist/ssr/wrangler.json`（M0 实测）。
-- 本地全链路：导入→幂等→替换→检索→引用→拒答→删除全部打通（flow-check 32/32）。
-- 失败补偿：嵌入失败 / 回读校验失败都不会留下「可被检索的失败文档」（单测覆盖）。
-- SSRF 尾点绕过已修（`169.254.169.254.` 被拒，单测覆盖）。
+**已验证（有证据，可复现）**：
+- 混合检索在 21 例评测上带来可测收益：关闭 Recall 85.7% → 开启 100%，拒答正确率/误拒率不变（CONTEXT §12.1）。
+- 追问改写生效且可观测：flow-check §8 断言 `rewritten=true` 且改写后的查询含上一轮问题；单测覆盖 `CONTEXT_REWRITE=0` 关闭路径。
+- 倒排与 chunk 生命周期一致：删除文档时 `chunk_terms` 一并清理（`d1-shim` 真 SQL 单测 + 路由删除断言）。
+- 探针不改写已有 `indexed_at`（单测），避免污染「刚导入」提示窗口。
+- OCR 接口契约：dataURL-only、页号上限、429/502/503 映射（单测 + flow-check）。
+- 浏览器接线：会话侧栏、追问标注、徽标翻转、取消回正、复制反馈复原（32/32 断言）。
 
-**未验证（属于推测，动它前先证伪）**：
-- **线上 Vectorize 的写入可见性延迟**：本地内存实现立即一致；线上可能有秒级延迟，回读校验若在延迟窗口内会误判失败。若线上出现「导入失败但实际成功」，优先怀疑这里 → 处置方向：给回读加短重试（3 次 × 300ms）。
-- **线上 `bge-m3` 的相似度尺度**：本地词袋余弦约 0.05~0.2，真模型通常更高；阈值必须重标，不能沿用本地数字。
-- **`node:sqlite` shim 与 D1 的行为差异**：`INSERT OR IGNORE` 语义、`RETURNING` 支持未在真 D1 上验过。
-- **浏览器内 pdf.js 的 bundle 体积与首屏影响**：已做动态 import 代码分割（430KB 独立 chunk），但真实弱网下的加载体验未测。
+**未验证（属推测，动它前先证伪）**：
+- **真 Vectorize 的可见性延迟在二期探针下的表现**：本地内存向量即时可见，线上可能首次探测即「暂时检索不到」——这是预期，不是 bug；但**探测失败率**没有线上数据。
+- **真模型对 `chunk_terms` 体积/写入耗时的影响**：每 chunk ≤24 term 的估算基于本地；线上导入总耗时是否仍在 60s 目标内未测。
+- **OCR 视觉模型的真实返回形状**：`extractOcrText` 兼容了 `answer/response/description/string`，但只在假模型上验证；真模型可能返回 markdown 包裹或带引导语（`normalizeOcrText` 只做了常见前缀清理）。
+- **多轮历史块对真模型的增益**：规则改写对检索的增益有断言，但「历史块是否真的改善回答质量」需要真模型 + 人工比对。
+- **`node:sqlite` shim 与真 D1 的差异**：`JOIN` + `LENGTH()` + 子查询在 shim 通过，真 D1 上未跑过 `chunk_terms` 相关查询（部署后建议直接点一次「检测」验证）。
 
 ## 6. 下一步建议
 
-1. 部署 + 四绑定核验（半小时）。
-2. 用真模型跑 `npm run eval`，标定阈值并写回 `CONTEXT.md` 决策记录（1 小时）。
-3. 若要做二期，优先顺序：多轮对话 → 历史 UI → 混合检索（关键词兜底）→ rerank（评测驱动）→ 扫描件 OCR。
+1. 部署（先 apply `0004`）+ 线上核验四绑定与新接口。
+2. 线上 `npm run eval`（真模型、真向量），按结果标定 `RETRIEVE_MIN_SCORE` 与关键词参数，并把数字写回 `CONTEXT.md` §12.1。
+3. 线上实测 OCR（中文扫描件 1–2 页），把质量结论与是否换模型写进交付文档 §9。
+4. 若继续迭代：rerank（评测驱动开关）→ 多知识库命名空间 → 会话级「只问某几篇文档」的过滤。

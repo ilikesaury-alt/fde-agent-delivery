@@ -261,9 +261,28 @@ chunks                   向量本体在 Vectorize，这里存原文与元数据
   text                   片段原文（引用 snippet 来源）
   created_at
 
-qa_history
+qa_history              一期真源；二期起**停止写入**，只兼容读（?includeLegacy=1）
   id / question / answer_json（{answer, citations[], refused, nearest}）
   cited_doc_ids（JSON 数组）/ created_at
+
+-- 以下三张表由 0004（二期）新增
+conversations           一次连续追问 = 一个会话
+  id TEXT PK             conv_<base36时间><随机>
+  title                  首问截断 60 字
+  created_at / updated_at（列表按 updated_at 倒序）
+
+messages                会话内的一轮问答（二期新真源）
+  id TEXT PK             msg_...
+  conversation_id → conversations.id
+  question / answer_json（AskResult）/ cited_doc_ids / refused
+  retrieval_query        规则改写后真正用于检索的查询（可观测）
+  created_at
+
+chunk_terms             关键词倒排（混合检索用）
+  term                   中文双字 bigram / 英文-数字-下划线词
+  chunk_id → chunks.id
+  tf                     该 term 在片段里的出现次数
+  PRIMARY KEY(term, chunk_id)   -- 每 chunk 最多 24 个 term（lib/hybrid.ts）
 ```
 
 **为什么 chunk id 要等于 vector id**：引用映射、删除清理、重试覆盖三件事都靠这个约定。删除时用 chunk id 批量 `deleteByIds`；重试时同 id 写入天然幂等。
@@ -369,3 +388,93 @@ qa_history
 | 复制而非 import | `lib/auth.ts` / `lib/llm.ts` / `lib/fetch-article.ts` 均为**独立副本**（三个产品独立部署，不跨目录引用） |
 | 业务 | **完全独立**：语料与演示场景不依赖其他产品 |
 | 新增能力 | 检索（RAG）、向量库、异步写入语义、质量评测集、PDF 前端解析 |
+---
+
+## 10. 二期新增机制（2026-10-28）
+
+### 10.1 多轮会话：为什么是「规则改写」而不是「LLM 改写」
+
+```
+用户追问 ──► loadHistory(最近 2 轮) ──► buildRetrievalQuery
+                                        │ 指代/省略判定
+                                        ├─ 命中 → 「上一轮问题 + 本轮问题」
+                                        └─ 未命中 → 原问题
+                                   ▼
+                     embed(改写后查询) → 检索（向量 + 关键词）
+                                   ▼
+              buildMessages(原问题, 命中片段, 历史块) → 流式生成
+```
+
+- **检索用改写后的查询**（否则「它呢」检索不到任何东西），**生成用原问题 + 历史块**（历史块显式标注「仅用于理解指代，不构成回答依据」）。
+- 不用 LLM 改写的原因：追问的绝大多数是指代省略，规则就能覆盖；LLM 改写要多一次调用、多 1–3 秒首 token、多一份失败分支，而收益需要评测证明。保留 `CONTEXT_REWRITE=0` 开关做 A/B。
+- 指代判定：指代词词典（它/这个/上述/还有/呢…）或问句长度 ≤6 字。两者都不满足就**不改写** —— 避免把「其实是新话题」短问拉回旧主题。
+
+### 10.2 混合检索：三个参数决定了它的行为
+
+```
+导入：chunk 文本 ──► tokenize（bigram + 英文词，去停用）
+                     ├─ code-like（err_1101 / wrangler）必留 ≤8 个
+                     └─ 其余按 tf 取前 24 ──► chunk_terms（D1）
+
+查询：query ──► 向量通道（Vectorize top-4k）
+              └► 关键词通道：term ──► chunk_terms JOIN chunks ──► BM25（idf 加权、df 低的词信号强）
+                                                            ├─ 入池：命中罕见词(df ≤ max(2, 5%·n))
+                                                            └─ 过闸：命中 code-like 或 ≥2 个选择性词
+                     ▼
+              RRF 融合：向量 1.0 ／ code 命中 1.0 ／ 泛词命中 0.4
+                     ▼
+        过闸 = 向量分 ≥ minScore  或  关键词通道入池（罕见词命中）
+```
+
+| 参数 | 值 | 为什么是这个值 |
+|---|---|---|
+| `MAX_TERMS_PER_CHUNK` | 24（code-like 另留 ≤8） | 体积：4000 chunk × 24 ≈ 9.6 万行，D1 免费额度无压力 |
+| `KEYWORD_MAX_DF_RATIO` / `rareDfThreshold` | 5%，下限 2 | 「罕见词」是关键词通道唯一的入池依据；小语料里泛词的 df 也常 ≤4，按比例算「选择性」会失效（实测 q21） |
+| `CODE_TERM_BOOST` | ×2 | 错误码/型号是这条通道存在的理由，不应被「应该/处理」这类词的分压过 |
+| `KEYWORD_RRF_WEIGHT` | 0.4 | 等权 RRF 会把「词面碰巧对上」顶到 top1（q06 Recall 100%→91.7%）；加权后向量保主排序 |
+| `KEYWORD_MIN_COVERAGE` | 0.6 | 过闸用的 idf 加权覆盖率（分母只算选择性词）；与「罕见词入池」配合成两道闸，挡掉「只命中一个少见词、其余全不沾边」的片段 |
+
+评测对比（同一语料 21 例，本地假嵌入）：关闭关键词通道 Recall 85.7% → 开启 100%，拒答正确率与误拒率不变（CONTEXT §12.1）。
+
+### 10.3 索引可见性探针：为什么不看时间、看事实
+
+Vectorize 的 upsert 是异步的（接口返回 ready 后 0–40 秒检索不到，约 50 秒才可见）。一期只能靠文案提示「等一会儿」，二期给出**可执行**的确认方式：
+
+```
+POST /api/probe { id }
+  取该文档前 1–3 个 chunk → 重新嵌入 → index.query(top5)
+  命中自身 chunk id ⇒ 可检索
+  写回：indexed_at 仅在为空时补写（不覆盖，避免污染 /api/ask 的「刚导入」提示窗口）
+```
+
+- 「探不到」返回 **200 + searchable:false**（还没好 ≠ 故障），只有调用真的失败才 5xx。
+- 前端把探针结果存在本地状态里，徽标翻成「可检索已验证」；刷新页面后回到「已就绪（未验证）」，需要可再点一次。
+
+### 10.4 扫描件 OCR：前端渲染、Worker 识别
+
+```
+浏览器：pdf.js getDocument → page.render(canvas, scale=2) → toDataURL(jpeg, 0.8)
+        （每页渲完立即 canvas=0 释放：一页 A4@2x 位图约 30MB）
+   │  逐页 POST { image: dataURL, page }
+   ▼
+Worker：/api/ocr → ai.run(OCR_MODEL, { task: "query", image, question }) → 取 answer
+        → 只收 data URL（不取远程 URL，避免新的 SSRF 面）
+        → 配额错误→429、上游错误→502、无文字→400
+   ▼
+浏览器：文本回填到可编辑 textarea → 用户校对 → 走同一导入管道
+```
+
+- **为什么不自动入库**：视觉模型的中文识别质量没有本地验证手段，唯一诚实的做法是让人校对。
+- 单页失败只跳过该页并提示页号，不整批报废；页数上限 5（前端渲染时截断，后端 `page > 5` 直接 400）。
+
+### 10.5 新增接口与本地替身
+
+| 接口 | 方法 | 语义 |
+|---|---|---|
+| `/api/conversations` | GET | 列表（倒序，含轮数）/ 带 `?id=` 返回会话 + 消息（正序） |
+| `/api/conversations?id=` | DELETE | 删除会话并连带消息，返回 `removedMessages` |
+| `/api/ocr` | POST | 单页识别 `{ image, page }` → `{ text, chars }` |
+| `/api/probe` | POST | `{ id }` → `{ searchable, checked, matches }` |
+| `/api/ask` | POST | 新增可选 `conversationId`；`done` 事件新增 `conversationId` / `messageId`；`result` 新增 `retrievalQuery` / `rewritten` |
+
+本地替身变化：`e2e/ai-shim.mjs` 增加视觉模型分支（`OCR_FAIL` / `OCR_TEXT` 可注入）；`e2e/serve-for-smoke.mjs` 常驻假上游 + shim，供 ego-browser 冒烟期间使用（`local-verify.mjs` 是跑完即退的验证器）。

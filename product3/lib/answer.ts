@@ -25,8 +25,12 @@ export const SNIPPET_MAX = 240;
  *
  * 编号格式 `[[n]]` 是给模型看的（与正文里模型应写的 `[n]` 区分开，
  * 避免模型把「上下文编号」和「引用标记」混为一谈）。
+ *
+ * `context` 是多轮的历史块（lib/conversation.ts 生成）。它**只用于理解指代**，
+ * 必须显式声明「不构成回答依据」—— 否则上一轮模型的措辞会被当成本轮事实，
+ * 幻觉会跨轮继承并放大（这是多轮 RAG 最常见的退化方式）。
  */
-export function buildMessages(question: string, hits: Hit[]): ChatMessage[] {
+export function buildMessages(question: string, hits: Hit[], context?: string): ChatMessage[] {
   const numbered = hits
     .map((h, i) => {
       const where = h.chunk.headingPath ? `｜位置：${h.chunk.headingPath}` : "";
@@ -50,7 +54,14 @@ export function buildMessages(question: string, hits: Hit[]): ChatMessage[] {
     },
     {
       role: "user",
-      content: `资料片段：\n\n${numbered}\n\n---\n\n问题：${question}`,
+      content: [
+        // 历史块只用于理解指代（buildContextBlock 内部已声明「不构成回答依据」）
+        context ? `${context}\n\n---` : "",
+        `资料片段：\n\n${numbered}`,
+        `---\n\n问题：${question}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     },
   ];
 }
@@ -89,6 +100,9 @@ export function buildCitations(answer: string, hits: Hit[], docTitles: Map<strin
   for (const n of cited) {
     const hit = hits[n - 1];
     if (!hit) continue;
+    // 只靠关键词进池的片段没有可信的向量分（score 为 0），前端据此换展示口径
+    const matchedBy: "vector" | "keyword" =
+      hit.sources?.includes("keyword") && !hit.sources?.includes("vector") ? "keyword" : "vector";
     out.push({
       index: n,
       docId: hit.chunk.docId,
@@ -96,6 +110,7 @@ export function buildCitations(answer: string, hits: Hit[], docTitles: Map<strin
       headingPath: hit.chunk.headingPath,
       snippet: truncate(hit.chunk.text, SNIPPET_MAX),
       score: hit.score,
+      matchedBy,
     });
   }
   return out;

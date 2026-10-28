@@ -85,6 +85,30 @@ async function readSse(res) {
   return events;
 }
 
+/** 一次问答：返回全部 SSE 事件（多轮/混合检索用例共用） */
+async function askOnce(payload) {
+  const res = await fetch(`${BASE}/api/ask`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const events = await readSse(res);
+  return { status: res.status, events };
+}
+
+/** 取 done 事件里的 data（统一防空） */
+function doneOf(events) {
+  return events.find((e) => e.event === "done")?.data ?? null;
+}
+
+/** 取 step=retrieve 且 status=done 的 detail 文本 */
+function retrieveDetail(events) {
+  const hit = events.find(
+    (e) => e.event === "step" && e.data?.step === "retrieve" && e.data?.status === "done",
+  );
+  return String(hit?.data?.detail ?? "");
+}
+
 async function main() {
   console.log(`\n目标：${BASE}`);
 
@@ -235,6 +259,151 @@ async function main() {
 
     const missing = await jsonFetch("/api/documents?id=nope", { method: "DELETE" });
     assert(missing.status === 404, "删除不存在 → 404", `status=${missing.status}`);
+  }
+
+  // ── 8 多轮会话（二期 A1/A2）──────────────────────────────────
+  console.log("\n── 8. 多轮会话（A1/A2）──");
+  let convId = "";
+  {
+    const first = await askOnce({ question: "免费额度会重置吗？" });
+    const d1 = doneOf(first.events);
+    convId = d1?.conversationId ?? "";
+    assert(Boolean(convId), "首问自动建会话并返回 conversationId", `conversationId=${convId}`);
+    assert(d1?.persisted === true, "首问落库", `persisted=${d1?.persisted}`);
+    assert(Boolean(d1?.messageId), "返回 messageId（会话内一轮的唯一标识）", `messageId=${d1?.messageId}`);
+
+    const second = await askOnce({ question: "它呢，会出现累积吗？", conversationId: convId });
+    const d2 = doneOf(second.events);
+    assert(d2?.conversationId === convId, "追问复用同一会话", `conversationId=${d2?.conversationId}`);
+    const rq = String(d2?.result?.retrievalQuery ?? "");
+    assert(d2?.result?.rewritten === true, "指代式追问被规则改写", `rewritten=${d2?.result?.rewritten}`);
+    assert(rq.includes("免费额度"), "改写后的检索查询带上上一轮主题", `query=${rq}`);
+
+    const list = await jsonFetch("/api/conversations");
+    const conv = list.body?.conversations?.find((c) => c.id === convId);
+    assert(list.status === 200 && Boolean(conv), "会话出现在列表里", `count=${list.body?.conversations?.length}`);
+    assert(conv?.turnCount === 2, "会话轮数为 2", `turnCount=${conv?.turnCount}`);
+
+    const detail = await jsonFetch(`/api/conversations?id=${convId}`);
+    assert(detail.body?.messages?.length === 2, "会话详情返回 2 条消息", `messages=${detail.body?.messages?.length}`);
+    const firstMsg = detail.body?.messages?.[0];
+    assert(Boolean(firstMsg?.result), "消息带完整结果（回答/引用/拒答）");
+
+    const missing = await jsonFetch("/api/conversations?id=conv_nope");
+    assert(missing.status === 404, "不存在的会话 → 404", `status=${missing.status}`);
+
+    const hint = await jsonFetch("/api/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: "还在吗？", conversationId: "conv_nope" }),
+    });
+    assert(hint.status === 404, "拿幽灵 conversationId 提问 → 404", `status=${hint.status}`);
+  }
+
+  // ── 9 混合检索（二期 A3）────────────────────────────────────
+  console.log("\n── 9. 混合检索关键词通道（A3）──");
+  {
+    const docC = `# 故障处理
+
+## 常见错误码
+
+报错 ERR_1101 表示 Workers AI 绑定缺失，请检查 wrangler.json 里的 ai 绑定。
+报错 ERR_2049 表示日配额耗尽，等次日恢复。`;
+    const imported = await jsonFetch("/api/documents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "paste", text: docC, title: "故障处理" }),
+    });
+    assert(imported.status === 201, "导入含错误码的文档 → 201", `status=${imported.status}`);
+
+    const asked = await askOnce({ question: "ERR_1101 是什么意思？" });
+    const detail = retrieveDetail(asked.events);
+    assert(/关键词 [1-9]/.test(detail), "关键词通道召回到片段（不是只有向量通道）", detail);
+    assert(/向量 1?\d* 段|向量 \d+ 段/.test(detail), "detail 同时透出两路召回数量", detail);
+
+    const done = doneOf(asked.events);
+    const answered = done?.result;
+    const hitText = JSON.stringify(answered?.citations?.length ? answered.citations : answered?.nearest ?? []);
+    assert(
+      /1101/.test(hitText),
+      "错误码类查询能命中含该码的片段（引用或最近似）",
+      hitText.slice(0, 120),
+    );
+  }
+
+  // ── 10 索引可见性探针（二期 A5）──────────────────────────────
+  console.log("\n── 10. 索引可见性探针（A5）──");
+  {
+    const list = await jsonFetch("/api/documents");
+    const doc = list.body?.documents?.find((d) => d.chunkCount > 0);
+    assert(Boolean(doc), "库内有可探测的文档");
+    const probed = await jsonFetch("/api/probe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: doc.id }),
+    });
+    assert(probed.status === 200 && probed.body?.ok === true, "POST /api/probe → 200", `status=${probed.status}`);
+    assert(probed.body?.searchable === true, "本地内存向量即时可见 → searchable=true", `searchable=${probed.body?.searchable}`);
+    assert((probed.body?.checked ?? 0) >= 1, "探测了至少 1 个片段", `checked=${probed.body?.checked}`);
+
+    const missing = await jsonFetch("/api/probe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "doc_nope" }),
+    });
+    assert(missing.status === 404, "探测不存在的文档 → 404", `status=${missing.status}`);
+
+    const noId = await jsonFetch("/api/probe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert(noId.status === 400, "缺 id → 400", `status=${noId.status}`);
+  }
+
+  // ── 11 扫描件 OCR（二期 A4）─────────────────────────────────
+  console.log("\n── 11. 扫描件 OCR（A4）──");
+  {
+    const img = "data:image/jpeg;base64," + Buffer.from("fake-page").toString("base64");
+    const ok = await jsonFetch("/api/ocr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ image: img, page: 1 }),
+    });
+    assert(ok.status === 200 && ok.body?.ok === true, "POST /api/ocr → 200", `status=${ok.status}`);
+    assert(typeof ok.body?.text === "string" && ok.body.text.length > 0, "返回识别文本", `len=${ok.body?.text?.length}`);
+    assert(ok.body?.page === 1, "回显页号", `page=${ok.body?.page}`);
+
+    const remote = await jsonFetch("/api/ocr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ image: "https://example.com/a.jpg", page: 1 }),
+    });
+    assert(remote.status === 400, "远程 URL 图片 → 400（只收 data URL，不新增 SSRF 面）", `status=${remote.status}`);
+
+    const tooMany = await jsonFetch("/api/ocr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ image: img, page: 6 }),
+    });
+    assert(tooMany.status === 400, "页号超上限 → 400", `status=${tooMany.status}`);
+  }
+
+  // ── 12 会话删除（A2 收尾）────────────────────────────────────
+  console.log("\n── 12. 会话删除 ──");
+  {
+    if (convId) {
+      const del = await jsonFetch(`/api/conversations?id=${convId}`, { method: "DELETE" });
+      assert(del.status === 200 && del.body?.ok === true, "删除会话 → 200", `status=${del.status}`);
+      assert(del.body?.removedMessages === 2, "连带删除 2 条消息", `removed=${del.body?.removedMessages}`);
+      const again = await jsonFetch(`/api/conversations?id=${convId}`, { method: "DELETE" });
+      assert(again.status === 404, "重复删除 → 404", `status=${again.status}`);
+      const list = await jsonFetch("/api/conversations");
+      assert(
+        !(list.body?.conversations ?? []).some((c) => c.id === convId),
+        "会话不再出现在列表",
+      );
+    }
   }
 
   console.log(`\n${"=".repeat(56)}`);

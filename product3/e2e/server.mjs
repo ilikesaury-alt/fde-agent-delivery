@@ -12,7 +12,8 @@
  * 用法：
  *   node --import ./e2e/bootstrap.mjs e2e/server.mjs [port]
  * 环境变量：MAGPIE_BASE_URL / MAGPIE_API_KEY / MAGPIE_MODEL / ACCESS_TOKEN
- *           RETRIEVE_TOP_K / RETRIEVE_MIN_SCORE / AI_FAIL / SQLITE_PATH
+ *           RETRIEVE_TOP_K / RETRIEVE_MIN_SCORE / HYBRID_ENABLED / CONTEXT_REWRITE
+ *           OCR_MODEL / AI_FAIL / OCR_FAIL / OCR_TEXT / SQLITE_PATH
  */
 
 import { createServer } from "node:http";
@@ -49,6 +50,10 @@ const workerEnv = {
   ACCESS_TOKEN: process.env.ACCESS_TOKEN || undefined,
   RETRIEVE_TOP_K: process.env.RETRIEVE_TOP_K,
   RETRIEVE_MIN_SCORE: process.env.RETRIEVE_MIN_SCORE,
+  // 二期开关（消融对比 / OCR 模型切换）
+  HYBRID_ENABLED: process.env.HYBRID_ENABLED,
+  CONTEXT_REWRITE: process.env.CONTEXT_REWRITE,
+  OCR_MODEL: process.env.OCR_MODEL,
   // Cloudflare Assets 绑定替身
   ASSETS: {
     async fetch(req) {
