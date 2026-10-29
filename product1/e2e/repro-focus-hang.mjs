@@ -23,7 +23,7 @@ const workspace = fileURLToPath(new URL("../..", import.meta.url));
 const outDir = join(workspace, "docs", "e2e-evidence", "focus-hang");
 mkdirSync(outDir, { recursive: true });
 
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 
 const results = [];
 const rec = (name, ok, detail) => {

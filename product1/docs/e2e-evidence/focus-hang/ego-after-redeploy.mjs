@@ -1,6 +1,6 @@
 // ego-browser: 重新部署后 live 验证 —— 过门禁后反复点 textarea，看 hang 是否消失
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const N = 12;
 const task = await taskSpace("focus-hang-after-redeploy");
 const page = task.page("p1");

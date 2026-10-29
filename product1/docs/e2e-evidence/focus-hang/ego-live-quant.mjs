@@ -1,7 +1,7 @@
 // ego-browser: live 大样本量化 —— 过门禁后反复点 textarea，统计 hang 频率
 // 目的：区分"必然 bug"（本地/ live 都应复现）vs"live 运行时偶发"
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const N = 12;
 const task = await taskSpace("focus-hang-live-quant");
 const page = task.page("p1");

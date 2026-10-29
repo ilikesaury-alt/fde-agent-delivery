@@ -1,6 +1,6 @@
 // ego-browser: 量化 hang 的稳定性 —— 原版 / 修复版 各多次点击 textarea，统计卡死次数
 // 关键：之前单次"不卡"可能是偶发，必须多次采样。
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 const ROUNDS = 5;
 

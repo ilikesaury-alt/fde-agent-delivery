@@ -1,6 +1,6 @@
 // ego-browser: 最终复测 —— 在 live 页面注入"修复后的真实 DOM"（header 改 static、去 blur）
 // 模拟生产代码修复后的渲染，复测点击 textarea 是否还卡。
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 
 const task = await taskSpace("focus-hang-verify-fix");

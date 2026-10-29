@@ -1,5 +1,5 @@
 // ego-browser: 收集 CSS 合成层证据（header backdrop-filter / sticky）+ 复测点击
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 
 const task = await taskSpace("focus-hang-gpu-bisect");

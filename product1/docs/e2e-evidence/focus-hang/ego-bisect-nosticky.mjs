@@ -1,5 +1,5 @@
 // ego-browser: 只关 sticky（保留 backdrop-filter），看 hang 是否消失
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 
 const task = await taskSpace("focus-hang-nosticky");

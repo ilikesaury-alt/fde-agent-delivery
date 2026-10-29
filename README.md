@@ -1,6 +1,6 @@
 # FDE 作品集（fde-agent-delivery）
 
-> 个人 FDE（Forward Deployed Engineer）作品集 — 两个已上线的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
+> 个人 FDE（Forward Deployed Engineer）作品集 — 三个已上线的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
 > 统一技术栈：**Void**（Cloudflare × VoidZero 开源的全栈 Vite 工具链）+ React SSR + Cloudflare Workers + magpie 中转。
 
 ## 产品一览
@@ -11,7 +11,7 @@
 | ② | **内容工作台**（content-studio） | https://content-studio.ilikesaury.workers.dev | 贴文章链接或粘贴素材 → 流式生成小红书图文笔记 + 历史/重新生成 |
 | ③ | **知识库问答**（kb-ask） | https://kb-ask.ilikesaury.workers.dev | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
 
-**三个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E 13/13（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）。证据见各自 `productN/docs/e2e-evidence/` 与 `product3/docs/deploy-kb-ask.md`。
+**三个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）。证据见各自 `productN/docs/e2e-evidence/` 与 `product3/docs/deploy-kb-ask.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 
@@ -41,6 +41,15 @@
 │       ├── HANDOFF-content-studio.md  # 技术交接
 │       ├── deploy-content-studio.md   # 部署记录（含 D1 建库链路）
 │       └── e2e-evidence/              # 线上 E2E 证据（live / smoke）
+├── product3/                          # ★ 产品③ 主目录（Void 项目，自包含，RAG 知识库问答）
+│   ├── CONTEXT.md                     # 需求活文档 / 验收标准 / 证据（含二期 D18–D23）
+│   ├── db/migrations/                 # D1 迁移（0001–0004）
+│   ├── eval/                          # 评测集（21 例 + 语料）+ 四指标口径
+│   └── docs/
+│       ├── features/kb-ask/           # 交付文档 + 工作原理文档
+│       ├── HANDOFF-kb-ask.md          # 技术交接
+│       ├── deploy-kb-ask.md           # 部署记录 + 线上排障复盘
+│       └── e2e-evidence/              # 浏览器冒烟日志
 ├── legacy/                            # 产品① v1 手写栈备份（仅对照，不提交）
 ├── research/                          # 调研克隆的参考仓库（不提交）
 └── tools/                             # 隧道/运维脚本（二进制不入库）
@@ -48,21 +57,19 @@
 
 ## 文档地图（按需取用）
 
-| 想看什么 | 产品① | 产品② |
-|---|---|---|
-| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` |
-| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` |
-| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` |
-| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` |
-| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` |
-
-> 产品③（kb-ask）的文档在 `product3/` 内：`product3/CONTEXT.md`（需求/验收/证据）、`product3/docs/features/kb-ask/kb-ask-交付文档.md`、`product3/docs/HANDOFF-kb-ask.md`。
+| 想看什么 | 产品① | 产品② | 产品③ |
+|---|---|---|---|
+| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` | `product3/CONTEXT.md` |
+| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` | `product3/docs/features/kb-ask/kb-ask-交付文档.md` |
+| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` | `product3/docs/features/kb-ask/kb-ask-工作原理.md` |
+| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` | `product3/docs/HANDOFF-kb-ask.md` |
+| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` | `product3/docs/deploy-kb-ask.md` |
 
 跨产品文档：`docs/个人AI智能体交付技术框架与流程.md`（交付流程）、`docs/pi-skills-setup.md`（Skill 重建）。
 
 ## 共享技术栈与关键约定
 
-两个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
+三个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
 
 - **layout 必须返回 fragment**：返回 `<html>/<head>/<body>` 会导致 SSR 水合错位（产品① focus-hang 教训，15–31s 主线程阻塞）
 - **密钥仅存 Worker env**（Void `defineEnv` 声明）：前端零密钥、不进仓库；访问令牌保护可选
@@ -74,7 +81,7 @@
 
 | 护栏 | 命令 / 位置 |
 |---|---|
-| 类型检查 + 单测 + 构建（两产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
+| 类型检查 + 单测 + 构建（三产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
 | 构建产物校验（SSR bundle / client 资产 / 无明文凭据） | 同上 |
 | 文档引用校验（防断链） | `node .github/scripts/check-doc-links.mjs` |
 | dev server 真启动探活（advisory） | CI `dev-smoke` job（本地沙箱跑不了 workerd，故移入 CI） |
@@ -164,18 +171,24 @@ npm run deploy -- --secrets <path-to-secrets>
 
 ## 产品③ 知识库问答（kb-ask）
 
-把私有文档变成可问、答得有据可查的知识库：粘贴 / .md·.txt / PDF（浏览器端抽文本）/ 网页链接导入 → 自动切分与向量索引（Workers AI bge-m3 + Vectorize）→ 流式问答 + 引用溯源；依据不足时明确拒答而不编造。
+把私有文档变成可问、答得有据可查的知识库：粘贴 / .md·.txt / PDF（浏览器端抽文本）/ 网页链接 / **扫描件 OCR** 导入 → 自动切分与向量索引（Workers AI bge-m3 + Vectorize）→ 流式问答 + 引用溯源；依据不足时明确拒答而不编造。
 
-- 本地全绿：单测 **93**、接口 E2E **32/32**、浏览器冒烟 **18/18**、评测（Recall 100% / 拒答正确 100% / 引用准确 100%）
-- 状态：**已上线且线上接口 E2E 13/13 通过**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验；含「轮询等索引追上后验证引用」一项）。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
-- 上线排障复盘：`product3/docs/deploy-kb-ask.md` §5（首次上线暴露 4 个只在线下测不到的真实缺陷）
-- 需求与验收：`product3/CONTEXT.md`（§5 验收标准 / §8 交叉审查处置 / §9 验收证据）
+**一期**（已上线）：文档导入 → 切分 → 向量检索 → 带引用回答 + 阈值拒答。
+
+**二期**（已上线）：多轮对话（会话持久化 + 上下文改写）· 会话侧栏 · **混合检索**（向量 + BM25 关键词双通道，RRF 融合）· **扫描件 OCR**（视觉模型识别后回填可编辑文本框，人工校对再入库）· **索引延迟提示**（三级徽标 + 可检索探针）。
+
+- 本地全绿：单测 **206**、接口 E2E **63/63**、浏览器冒烟 **33/33**、评测 21 例（Recall 100% / 拒答 100% / 误拒 17.6% / 引用准确 100%）
+- 线上：**接口 E2E 35/35** + **线上评测 21 例**（真 bge-m3 + 真 Vectorize + 真 magpie）→ Recall **100%** / 拒答 **100%** / 误拒 **0%** / 引用准确 **100%**；阈值 0.45 经真环境标定**无需调整**
+- 线上人工用例 **M1–M5 全部结项**：扫描件 OCR 端到端跑通（识别 152 字全中、2 处可校对误差）· 线上 eval 标定 · 索引可见性实测 **72s** · 三轮追问全部答对 · 阈值标定
+- 状态：**已上线**。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
+- 上线排障复盘：`product3/docs/deploy-kb-ask.md` §5（首次上线暴露的只在线下测不到的真实缺陷）+ §6.5–6.6（二期线上验证与库清理）
+- 需求与验收：`product3/CONTEXT.md`（一期 §5–§9 / 二期 §10–§14 / 复盘沉淀 §15）
 - 快速开始：`cd product3 && npm install --ignore-scripts && npm test && npm run build`
 - 本地全量验证：`npm run verify:local`（一键起假上游+shim、跑 E2E 与评测、自动清理）
-- 部署：`npm run deploy -- --secrets .secrets.json`（部署后必查 ASSETS/DB/AI/VEC 四个绑定）
+- 线上验证：`ego-browser nodejs < e2e/live-e2e.mjs`（35 项）/ `ego-browser nodejs < e2e/live-eval.mjs`（21 例评测）
+- 部署：`npm run deploy -- --secrets .secrets.json`（部署后必查 ASSETS/DB/AI/VEC 四个绑定；**迁移必须先 apply**）
 - 交付文档（测试/业务）：`product3/docs/features/kb-ask/kb-ask-交付文档.md`
 - 工作原理（开发会话）：`product3/docs/features/kb-ask/kb-ask-工作原理.md`
-- 上线排障复盘：`product3/docs/deploy-kb-ask.md` §5
 - 技术交接：`product3/docs/HANDOFF-kb-ask.md`
 
 ---

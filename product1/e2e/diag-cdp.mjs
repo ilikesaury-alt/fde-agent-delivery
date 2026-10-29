@@ -14,7 +14,7 @@ const URL_ = process.argv[2] || "https://meeting-digest.ilikesaury.workers.dev/"
 const workspace = fileURLToPath(new URL("../..", import.meta.url));
 const outDir = join(workspace, "docs", "e2e-evidence", "focus-hang");
 mkdirSync(outDir, { recursive: true });
-const TOKEN = process.env.MD_TOKEN || "REDACTED_TOKEN";
+const TOKEN = process.env.MD_TOKEN || process.env.ACCESS_TOKEN || "";
 
 const browser = await chromium.launch({
   channel: "msedge", headless: true, args: ["--disable-gpu"],

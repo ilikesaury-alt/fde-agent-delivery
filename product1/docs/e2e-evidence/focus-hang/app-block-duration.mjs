@@ -1,6 +1,6 @@
 // 量化 app 页面的主线程阻塞时长（极简页只停帧不停主线程，app 页两者都停）
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const task = await taskSpace("app-block-duration");
 const page = task.page("p1");
 const log = (o) => console.log(JSON.stringify(o));

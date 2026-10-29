@@ -1,7 +1,7 @@
 // 决定性实验：区分 H1(真死循环) / H2(不产帧) / H3(CDP通道)
 // 核心判据：hang 期间 evaluate（不需帧）是否仍可用？rAF（需帧）是否停止？
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 
 const task = await taskSpace("focus-hang-hypothesis-split");
 const page = task.page("p1");

@@ -1,6 +1,6 @@
 // 线上最终验证：新隧道 + cheap-first + 修复后的 UI（完整用户流程）
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 
 const task = await taskSpace("live-final-verify");
 const page = task.page("p1");

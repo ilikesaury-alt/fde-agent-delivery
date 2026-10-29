@@ -7,7 +7,7 @@
 | 项 | 值 |
 |----|-----|
 | **线上地址** | https://meeting-digest.ilikesaury.workers.dev |
-| **访问令牌** | `REDACTED_TOKEN` |
+| **访问令牌** | `<ACCESS_TOKEN>`（本地 secrets 文件持有，gitignore 不入库；线上用 `wrangler secret list` 核对） |
 | Worker | `meeting-digest` |
 | Version ID | `9ff7d341-ff29-4ffb-b660-ee4986c21f8c`（首次部署快照；**当前线上版本见 [线上环境速查](../../docs/线上环境速查.md)**） |
 | 上游网关 | https://tahoe-mainland-selection-cigarette.trycloudflare.com/v1 |
@@ -23,7 +23,7 @@
 
 ```bash
 curl -X POST https://meeting-digest.ilikesaury.workers.dev/api/digest \
-  -H "Authorization: Bearer REDACTED_TOKEN" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"text":"你的会议记录..."}'
 ```

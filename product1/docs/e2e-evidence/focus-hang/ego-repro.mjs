@@ -1,7 +1,7 @@
 // ego-browser repro for "点击 textarea 主线程卡死" (focus-hang)
 // Run: ego-browser nodejs < this file
 const EVIDENCE = "H:/Work/Projects/Personal/fde-agent-delivery/docs/e2e-evidence/focus-hang";
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 
 const task = await taskSpace("focus-hang-repro");

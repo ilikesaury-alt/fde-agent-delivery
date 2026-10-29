@@ -1,5 +1,5 @@
 // ego-browser: 注入 CSS 关闭 backdrop-filter / 降低合成压力后，点击 textarea 看是否还卡
-const TOKEN = "REDACTED_TOKEN";
+const TOKEN = (process.env.ACCESS_TOKEN || process.env.MEETING_DIGEST_TOKEN || "").trim();
 const URL_ = "https://meeting-digest.ilikesaury.workers.dev/";
 
 const task = await taskSpace("focus-hang-noblur");
