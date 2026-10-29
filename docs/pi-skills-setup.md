@@ -14,15 +14,20 @@
 
 ## 当前配置
 
-两个本项目沉淀的 skill，**真源在全局库**，项目内通过 junction 引用：
+四个本项目沉淀的 skill，**真源在全局库**，项目内通过 junction 引用：
 
 | Skill | 真源（唯一） | 项目内形态 |
 |---|---|---|
 | `perf-hang-triage` | `E:/Obsidian/lic-notebook/skills/perf-hang-triage/` | junction |
 | `cf-worker-local-env` | `E:/Obsidian/lic-notebook/skills/cf-worker-local-env/` | junction |
+| `workers-ai-model-usage` | `E:/Obsidian/lic-notebook/skills/workers-ai-model-usage/` | junction |
+| `rag-retrieval-tuning` | `E:/Obsidian/lic-notebook/skills/rag-retrieval-tuning/` | junction |
 
-两个都是**通用能力**（页面卡死分层诊断 / Cloudflare Workers 环境约束），
-不含本项目硬编码事实，因此放全局库、跨项目复用。
+四个都是**通用能力**（页面卡死分层诊断 / Cloudflare Workers 环境约束 / Workers AI 模型调用 /
+RAG 检索调优），不含本项目硬编码事实，因此放全局库、跨项目复用。
+
+> 2026-10-28 新增后两个：来自产品③ kb-ask 二期的线上实测（视觉模型入参形状矩阵与 5016 许可自愈、
+> 混合检索两道闸门与多轮锚点链稀释、四指标评测标定）。见下方「新增 skill 的沉淀流程」。
 
 ## 重建步骤
 
@@ -30,7 +35,9 @@
 
 ```bash
 ls -d E:/Obsidian/lic-notebook/skills/perf-hang-triage \
-      E:/Obsidian/lic-notebook/skills/cf-worker-local-env
+      E:/Obsidian/lic-notebook/skills/cf-worker-local-env \
+      E:/Obsidian/lic-notebook/skills/workers-ai-model-usage \
+      E:/Obsidian/lic-notebook/skills/rag-retrieval-tuning
 ```
 
 若缺失，从本项目 git 历史恢复（曾提交于 `908e89c` / `116c4eb`）：
@@ -43,6 +50,9 @@ cp /tmp/pht.md E:/Obsidian/lic-notebook/skills/perf-hang-triage/SKILL.md
 cp /tmp/cwle.md E:/Obsidian/lic-notebook/skills/cf-worker-local-env/SKILL.md
 ```
 
+> ⚠️ 后两个 skill（2026-10-28 新增）的真源**只存在于全局库**（Obsidian 仓库），
+> 本项目 git 历史里没有副本。全局库丢失 = 这两个 skill 丢失，备份好 `E:/Obsidian/lic-notebook`。
+
 ### 2. 创建 junction（Windows，普通用户权限即可）
 
 ```bash
@@ -51,6 +61,8 @@ mkdir -p .pi/skills
 
 cmd //c "mklink /J .pi\\skills\\perf-hang-triage E:\\Obsidian\\lic-notebook\\skills\\perf-hang-triage"
 cmd //c "mklink /J .pi\\skills\\cf-worker-local-env E:\\Obsidian\\lic-notebook\\skills\\cf-worker-local-env"
+cmd //c "mklink /J .pi\\skills\\workers-ai-model-usage E:\\Obsidian\\lic-notebook\\skills\\workers-ai-model-usage"
+cmd //c "mklink /J .pi\\skills\\rag-retrieval-tuning E:\\Obsidian\\lic-notebook\\skills\\rag-retrieval-tuning"
 ```
 
 > ⚠️ **不要用 `ln -s`**：Git Bash 的 `ln -s` 在无权限时会**静默降级成复制**，
@@ -80,7 +92,7 @@ d[cwd]=true; fs.writeFileSync(p, JSON.stringify(d,null,2));
 pi -p "列出你当前可用的所有 skill 名称，逗号分隔，只输出名称。"
 ```
 
-期望输出含：`cf-worker-local-env, perf-hang-triage`（另加 3 个全局 skill）。
+期望输出含：`cf-worker-local-env, perf-hang-triage, workers-ai-model-usage, rag-retrieval-tuning`（另加全局 skill）。
 
 验证链接是否真生效（改动真源应立刻反映）：
 
@@ -98,6 +110,27 @@ sed -i '$ d' E:/Obsidian/lic-notebook/skills/perf-hang-triage/SKILL.md   # 回�
 description 合计约 11,700 字符 ≈ **3,900 tokens 固定成本**。
 
 正确做法：需要时用 `/skill:name` 或 `pi --skill <path>` 显式加载。
+
+## 新增 skill 的沉淀流程（2026-10-28 定稿）
+
+产品③ 二期结束后把线上实战经验沉淀成全局 skill，流程固定为：
+
+1. **按全局库 `skills/README.md` 第二节的收纳判定表裁决归属**：
+   - 环境/工具专属坑 → 独立通用技能
+   - 同一规则在 ≥2 处维护 → 抽 `_shared/`（本次无）
+   - 只被一个流程用 → 留在编排器内联（本次无）
+2. **正文只写「验收标准写死 + 踩过的坑写活」**，代码里能读出来的不写。
+3. **体量红线**：单文件 SKILL.md ≤500 行（README 建议）—— 超了把细节拆 `references/`，
+   主文件只留入口与速览。`cf-worker-local-env` 本次由 589 行拆到 476 行。
+4. **补触发口**：`口令对照表.md` 加一行（项目技能除外）。
+5. **跑引用完整性校验**（提交前必跑）：
+   ```bash
+   node E:/Obsidian/lic-notebook/skills/check-refs.mjs
+   ```
+   校验四项：引用图无环 / 无断链 / 触发口齐全 / 无明文凭证。
+   **校验器本身要验证过**：故意注入一个环 + 一个断链 + 一条明文凭证，确认都能被抓到
+   （本次已验证——第一版校验器的环检测因节点命名不一致而漏检，已修）。
+6. **项目侧建 junction** 并更新本文件的「当前配置」表。
 
 ## 相关记录
 

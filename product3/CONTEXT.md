@@ -680,3 +680,48 @@ ego-browser nodejs < e2e/smoke-ui.mjs            # 通过 18 · 失败 0
 | 6 | 稳定 CRUD | documents/conversations 的增删改查沿用一期约定，未重复审 |
 
 **判定：通过**（遗留项均为「需线上真模型/环境」的验证，不是本流程可闭环的缺陷）。
+
+---
+
+## 15. 第 10 步复盘：经验沉淀到全局 Skill（2026-10-28）
+
+按 `dev-task-flow` 第 10 步 + `capture-experience` 判定「本次重复超过 3 次的流程」。
+**本次不新建项目内 Skill**（项目内 `.pi/skills/` 只是 junction，真源在全局库），
+而是把可复用规则沉淀到全局技能库 `E:/Obsidian/lic-notebook/skills/`。
+
+### 15.1 沉淀去向（按全局库 README 收纳判定表裁决）
+
+| 经验 | 归属 | 去向 |
+|---|---|---|
+| Workers AI 视觉模型入参形状矩阵 / 5016 许可自愈 / 返回体容错 / 错误分类与 HTTP 映射 | 环境工具专属坑 → 独立通用技能 | **新建** `workers-ai-model-usage/` |
+| 混合检索两道闸门 / 多轮锚点链稀释 / 双路检索 RRF 合并 / 四指标评测标定 / 阈值跨环境不可移植 | RAG 方法论（换项目仍可用）→ 通用层 | **新建** `rag-retrieval-tuning/` |
+| D1 单条 SQL 绑定变量上限 100（本地测不出）/ 迁移只能 `migrations apply` / 索引异步可见性 50–90s 与「索引中」提示语义 | CF 栈事实，已有归属 | 追加进 `cf-worker-local-env/` |
+| 沙箱 Node 出网被限 → 浏览器通道跑线上评测 | 已有归属 | 追加进 `rag-retrieval-tuning/` 第七节 |
+
+### 15.2 同步动作
+
+- `cf-worker-local-env` 由 **589 行拆到 476 行**：最长的「线上排障」节拆进
+  `references/online-triage.md`（主文件留六步速览入口），满足全局库「单文件 ≤500 行」体量红线。
+- 全局库新增 `check-refs.mjs`：引用图去环 / 断链 / 触发口齐全 / 明文凭证 四项校验。
+  **校验器本身经注入测试验证**（第一版环检测因节点命名不一致而漏检，已修）。
+- 项目侧 `.pi/skills/` 建两个 junction；`docs/pi-skills-setup.md` 补「当前配置」表与
+  「新增 skill 的沉淀流程」6 步。
+
+### 15.3 未沉淀的部分（判定为「不抽」）
+
+- **项目专属事实**（kb-ask 的表结构、路由契约、阈值 0.45 的具体取值、评测语料）→ 留在本 CONTEXT
+  与交付文档，按全局库红线「项目专属内容不进通用技能」。
+- **只在本流程用一次的编排细节**（第 11 步 E2E 的具体顺序）→ 留在 `_shared/e2e-manual.md` 内联。
+- **模型 ID 作为硬依赖** → 全局技能只写「按模型族判定形状」+「以当下目录为准」，不写死 ID 为唯一答案。
+
+### 15.4 验收证据
+
+```bash
+node E:/Obsidian/lic-notebook/skills/check-refs.mjs
+# → 技能目录：26 个 · _shared 8 个 · 受检文件 43 个
+# → ✔ 引用完整性校验通过（无环 / 无断链 / 触发口齐全 / 无明文凭证）
+```
+
+校验器注入测试（已做，故意制造问题确认能抓到）：
+环（`cf-worker-local-env → workers-ai-model-usage → cf-worker-local-env`）✔ 抓到 ·
+断链（`references/does-not-exist.md`）✔ 抓到 · 明文凭证（`sk-` 前缀串）✔ 抓到。
