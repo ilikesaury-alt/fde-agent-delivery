@@ -94,7 +94,12 @@ jobs:
           cache: npm
           cache-dependency-path: product1/package-lock.json
       - run: npm ci
+      # env 必填（MAGPIE_BASE_URL/MAGPIE_API_KEY 无 default）；.env 被 gitignore，
+      # CI 里给 dummy 值（/api/health 不调上游，dummy 足够让 dev server 启动）
       - name: 启动 vite dev 并探活 /api/health
+        env:
+          MAGPIE_BASE_URL: https://dummy.invalid/v1
+          MAGPIE_API_KEY: dummy-key
         run: |
           set -uo pipefail
           npm run dev -- --port 5188 --strictPort > /tmp/vite-dev.log 2>&1 &
