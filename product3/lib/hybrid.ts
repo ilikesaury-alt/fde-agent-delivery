@@ -249,6 +249,11 @@ export const CODE_TERM_BOOST = 2;
  * 顺序：先收所有 code-like term（错误码/型号/英文词，最多 MAX_CODE_TERMS_PER_CHUNK 个），
  * 再用剩余额度按 tf 降序补中文 bigram。
  *
+ * tie-break 用 Unicode 码点比较而不是 localeCompare：localeCompare 不带 locale 参数时
+ * 结果依赖运行环境的默认 locale（Windows zh-CN 拼音序 vs Linux C 码点序），
+ * tf 打平时的排序会跨平台不同 → 单测在 CI 上挂（实测：期望「部署」实际「回滚」）。
+ * 检索 term 排序只需要确定性（便于测试与对账），不需要字典序语义。
+ *
  * 为什么不能只看 tf：一个 chunk 里 `ERR_1101` 只出现 1 次，而「报错」「绑定」出现 2 次，
  * 纯按 tf 截断会把错误码挤掉 —— 那样混合检索就救不回它本来要救的东西（实测踩过）。
  */
@@ -258,7 +263,7 @@ export function extractTerms(text: string, max = MAX_TERMS_PER_CHUNK): TermFrequ
 
   const all = [...counts.entries()]
     .map(([term, tf]) => ({ term, tf }))
-    .sort((a, b) => b.tf - a.tf || a.term.localeCompare(b.term));
+    .sort((a, b) => b.tf - a.tf || (a.term < b.term ? -1 : a.term > b.term ? 1 : 0));
 
   const code = all.filter((t) => CODE_LIKE_RE.test(t.term)).slice(0, MAX_CODE_TERMS_PER_CHUNK);
   const rest = all.filter((t) => !CODE_LIKE_RE.test(t.term));

@@ -38,7 +38,9 @@ describe("hybrid — 分词", () => {
 
 describe("hybrid — term 抽取与体积约束", () => {
   it("按 tf 降序，且不超过 MAX_TERMS_PER_CHUNK", () => {
-    const text = "部署 部署 部署 回滚 回滚 配额 绑定 模型 计费 向量 检索 索引 分词 融合 权重 阈值 拒答 引用 片段 文档 知识库 导入 导出 备份 恢复 迁移 校验 版本 回滚点 演练";
+    // 注意：文本不能让第二个词与「部署」tf 打平（如「回滚点」会产生 bigram「回滚」），
+    // 否则排序由 tie-break 决定 —— tie-break 是平台无关的码点序，测试期望会随文本而变。
+    const text = "部署 部署 部署 回滚 回滚 配额 绑定 模型 计费 向量 检索 索引 分词 融合 权重 阈值 拒答 引用 片段 文档 知识库 导入 导出 备份 恢复 迁移 校验 版本号 演练";
     const terms = extractTerms(text);
     assert(terms.length <= MAX_TERMS_PER_CHUNK, `实际 ${terms.length}`);
     assertEqual(terms[0].term, "部署", "最高 tf 的 term 排第一");
