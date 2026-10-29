@@ -14,7 +14,7 @@
 
 ## 当前配置
 
-四个本项目沉淀的 skill，**真源在全局库**，项目内通过 junction 引用：
+五个本项目沉淀的 skill，**真源在全局库**，项目内通过 junction 引用：
 
 | Skill | 真源（唯一） | 项目内形态 |
 |---|---|---|
@@ -22,12 +22,15 @@
 | `cf-worker-local-env` | `E:/Obsidian/lic-notebook/skills/cf-worker-local-env/` | junction |
 | `workers-ai-model-usage` | `E:/Obsidian/lic-notebook/skills/workers-ai-model-usage/` | junction |
 | `rag-retrieval-tuning` | `E:/Obsidian/lic-notebook/skills/rag-retrieval-tuning/` | junction |
+| `ci-parity-triage` | `E:/Obsidian/lic-notebook/skills/ci-parity-triage/` | junction |
 
 四个都是**通用能力**（页面卡死分层诊断 / Cloudflare Workers 环境约束 / Workers AI 模型调用 /
 RAG 检索调优），不含本项目硬编码事实，因此放全局库、跨项目复用。
 
-> 2026-10-28 新增后两个：来自产品③ kb-ask 二期的线上实测（视觉模型入参形状矩阵与 5016 许可自愈、
-> 混合检索两道闸门与多轮锚点链稀释、四指标评测标定）。见下方「新增 skill 的沉淀流程」。
+> 2026-10-28 新增 `workers-ai-model-usage` / `rag-retrieval-tuning`：来自产品③ kb-ask 二期的线上实测
+> （视觉模型入参形状矩阵与 5016 许可自愈、混合检索两道闸门与多轮锚点链稀释、四指标评测标定）。
+> 2026-10-29 新增 `ci-parity-triage`：仓库首次接 GitHub Actions，5 个 job 逐个红灯暴露的 6 类环境差异
+> （依赖锁定 / 文件存在性 / 大小写 / locale 排序 / 网络绑定 / env 文件）。见下方「新增 skill 的沉淀流程」。
 
 ## 重建步骤
 
@@ -37,7 +40,7 @@ RAG 检索调优），不含本项目硬编码事实，因此放全局库、跨�
 ls -d E:/Obsidian/lic-notebook/skills/perf-hang-triage \
       E:/Obsidian/lic-notebook/skills/cf-worker-local-env \
       E:/Obsidian/lic-notebook/skills/workers-ai-model-usage \
-      E:/Obsidian/lic-notebook/skills/rag-retrieval-tuning
+      E:/Obsidian/lic-notebook/skills/rag-retrieval-tuning       E:/Obsidian/lic-notebook/skills/ci-parity-triage
 ```
 
 若缺失，从本项目 git 历史恢复（曾提交于 `908e89c` / `116c4eb`）：
@@ -50,7 +53,7 @@ cp /tmp/pht.md E:/Obsidian/lic-notebook/skills/perf-hang-triage/SKILL.md
 cp /tmp/cwle.md E:/Obsidian/lic-notebook/skills/cf-worker-local-env/SKILL.md
 ```
 
-> ⚠️ 后两个 skill（2026-10-28 新增）的真源**只存在于全局库**（Obsidian 仓库），
+> ⚠️ 后三个 skill（2026-10-28/29 新增）的真源**只存在于全局库**（Obsidian 仓库），
 > 本项目 git 历史里没有副本。全局库丢失 = 这两个 skill 丢失，备份好 `E:/Obsidian/lic-notebook`。
 
 ### 2. 创建 junction（Windows，普通用户权限即可）
@@ -92,7 +95,7 @@ d[cwd]=true; fs.writeFileSync(p, JSON.stringify(d,null,2));
 pi -p "列出你当前可用的所有 skill 名称，逗号分隔，只输出名称。"
 ```
 
-期望输出含：`cf-worker-local-env, perf-hang-triage, workers-ai-model-usage, rag-retrieval-tuning`（另加全局 skill）。
+期望输出含：`cf-worker-local-env, perf-hang-triage, workers-ai-model-usage, rag-retrieval-tuning, ci-parity-triage`（另加全局 skill）。
 
 验证链接是否真生效（改动真源应立刻反映）：
 

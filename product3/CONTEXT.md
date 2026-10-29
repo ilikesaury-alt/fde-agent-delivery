@@ -725,3 +725,33 @@ node E:/Obsidian/lic-notebook/skills/check-refs.mjs
 校验器注入测试（已做，故意制造问题确认能抓到）：
 环（`cf-worker-local-env → workers-ai-model-usage → cf-worker-local-env`）✔ 抓到 ·
 断链（`references/does-not-exist.md`）✔ 抓到 · 明文凭证（`sk-` 前缀串）✔ 抓到。
+
+---
+
+## 16. 仓库接入 CI 后的环境差异（2026-10-29，首次 push 后 4 个 job 逐个红灯）
+
+首次推送到 GitHub 后 CI 连续红灯，**5 个 job 里有 4 个暴露了本地测不到的环境差异**。
+全部修复后 CI 全绿（run `40817135977`）。这些差异不是本产品特有的 bug，而是
+「本地验证 ≠ CI 环境」的通用事实，已沉淀为通用技能 `ci-parity-triage`。
+
+| # | job | 根因 | 分类 | 修复 |
+|---|---|---|---|---|
+| 1 | `docs` | 链接校验按**磁盘存在性**判定 —— 被 gitignore 的本地文件（`.secrets.json`/`.env`）本地有、checkout 没有 → 12 处「断链」 | 文件存在性 | 改按 `git ls-files` **追踪集**判定；gitignore 匹配的路径视为「有意引用的本地文件」跳过 |
+| 2 | `quality/product2` | `npm ci` 严格模式发现 **lock 与 package.json 不同步**（esbuild 0.25.12 vs 0.28.2）—— 本地一直用 `npm install --ignore-scripts`，宽松解析把问题掩盖了 | 依赖锁定 | `npm install` 重新同步并提交 lock |
+| 3 | `quality/product3` | 单测「最高 tf 的 term 排第一」失败（期望「部署」实际「回滚」）—— tie-break 用了**不带 locale 的 `localeCompare`**，Windows zh-CN 拼音序与 Linux C 码点序不同；且测试文本里「回滚点」的 bigram 让「回滚」tf 打平 | locale 排序 | ① tie-break 改 Unicode 码点比较（检索只需确定性）② 测试文本改为「部署」唯一 tf 最高（断言不该落在 tie-break 上） |
+| 4 | `dev-smoke` | 两层叠加：CI 无 `.env` → 必填 env 校验不过；补 dummy env 后仍不通，因 vite 只绑 `localhost`（runner 上解析为 IPv6）而探活打 `127.0.0.1` | env 文件 + 网络绑定 | 注入 dummy env；`--host 127.0.0.1` 让绑定与探测一致 |
+
+### 16.1 顺带修掉的校验器自身缺陷（假绿）
+
+- **反引号路径白名单缺 `product3`** —— 本产品新增的 `product3/...` 路径**从未被校验过**，
+  校验器报「通过」但实际漏检。已补。
+- **通配规则转义写法被工具链写坏**：`/\*\*/g` 在多轮「脚本改脚本」中被写成 `/\**\*/`
+  （匹配反斜杠序列），星号替换永不发生、规则全部失效，但代码看起来完全正确。
+  已改为**逐字符构造**（碰 `*` 拼 `[^/]*`），彻底避开转义技巧。
+- 校验器本身用**注入测试**验证：真断链 / 反引号假路径 / 引用成环 / 明文凭证 各注入一次，
+  全部被抓到（本轮及上一轮各做过一次）。
+
+### 16.2 判定口径（写入技能库，不重复维护）
+
+六类差异与判据见 `E:/Obsidian/lic-notebook/skills/ci-parity-triage/SKILL.md`；
+本产品只保留「本次踩到的是哪几类、怎么修的」这一层事实。
