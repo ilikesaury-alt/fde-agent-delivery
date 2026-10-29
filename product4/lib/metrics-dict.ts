@@ -13,8 +13,23 @@
  * 字典只服务于**归一**，不服务于**拦截** —— 报告里有的指标一律入库。
  */
 
-/** 标准指标定义：standard 标准名，unit 常用单位提示，aliases 报告里见过的写法（小写比较） */
-export type StandardMetric = { standard: string; aliases: string[] };
+/**
+ * 标准指标定义。
+ * - `aliases`：报告里见过的写法（小写比较，**整串精确匹配**，不做子串匹配）
+ * - `veto`：**上下文否决**——命中则这条别名不适用，退回到「清洗后的原文名」自成一条序列。
+ *   为什么需要：别名是整串匹配，但括号被 `cleanLoose` 剥掉后可能撞车，
+ *   例如「葡萄糖(餐后2h)」清洗后就是「葡萄糖」→ 会被错并入空腹血糖（同单位、无告警、假趋势）。
+ *   审查实测把这类错并列为**阻塞**：错误的异常结论比没有结论更糟。
+ */
+export type StandardMetric = { standard: string; aliases: string[]; veto?: RegExp };
+
+/**
+ * 常见面板/口径标记（用于 veto）。
+ * 只否决「同名字不同测项」的已知撞车，不做泛化猜测 —— 宁可分线，不可错并。
+ */
+const NOT_FASTING = /餐后|餐前|随机|1h|2h|3h|糖耐|OGTT|负荷|尿|糖化|空腹胰岛素/;
+const NOT_BLOOD_PANEL = /尿|粪|便|脑脊液|胸水|腹水|HPF|镜检|沉渣/;
+const NOT_SERUM = /尿|微量|脑脊液/;
 
 /**
  * 首发字典（涵盖高频 panel：血常规 / 血脂 / 肝功 / 肾功 / 血糖 / 尿酸 / 甲状腺）。
@@ -22,8 +37,8 @@ export type StandardMetric = { standard: string; aliases: string[] };
  */
 export const STANDARD_METRICS: StandardMetric[] = [
   // ── 血常规 ────────────────────────────────────────────────
-  { standard: "白细胞计数", aliases: ["白细胞", "wbc", "白细胞数", "leucocyte", "white blood cell"] },
-  { standard: "红细胞计数", aliases: ["红细胞", "rbc", "红细胞数", "erythrocyte"] },
+  { standard: "白细胞计数", aliases: ["白细胞", "wbc", "白细胞数", "leucocyte", "white blood cell"], veto: NOT_BLOOD_PANEL },
+  { standard: "红细胞计数", aliases: ["红细胞", "rbc", "红细胞数", "erythrocyte"], veto: NOT_BLOOD_PANEL },
   { standard: "血红蛋白", aliases: ["hb", "hgb", "hemoglobin", "血红蛋白浓度"] },
   { standard: "血小板计数", aliases: ["血小板", "plt", "platelet", "血小板数"] },
   { standard: "中性粒细胞百分比", aliases: ["中性粒细胞比率", "neut%", "ne%", "neutrophil%"] },
@@ -31,24 +46,31 @@ export const STANDARD_METRICS: StandardMetric[] = [
 
   // ── 血脂 ──────────────────────────────────────────────────
   { standard: "总胆固醇", aliases: ["胆固醇", "tc", "total cholesterol", "chol"] },
-  { standard: "甘油三酯", aliases: ["tg", "triglyceride", "甘油三脂"] },
+  // 「甲状腺球蛋白 TG」是另一个测项（ng/mL），不能并入甘油三酯
+  { standard: "甘油三酯", aliases: ["tg", "triglyceride", "甘油三脂"], veto: /甲状腺|球蛋白|游离/ },
   { standard: "高密度脂蛋白胆固醇", aliases: ["hdl", "hdl-c", "高密度脂蛋白"] },
   { standard: "低密度脂蛋白胆固醇", aliases: ["ldl", "ldl-c", "低密度脂蛋白"] },
 
   // ── 血糖 ──────────────────────────────────────────────────
-  { standard: "空腹血糖", aliases: ["血糖", "glu", "glucose", "空腹葡萄糖", "葡萄糖"] },
+  // ⚠️ 这里刻意**不收**「血糖 / glu / glucose / 葡萄糖」这类宽别名：
+  //    它们同时也是「餐后血糖 / OGTT 负荷试验 / 尿糖」的写法，同单位错并后
+  //    趋势图会给出假趋势、异常判定会给出错误结论（审查阻塞项）。
+  //    未命中就退回原文名自成一条线 —— 宁可分线，不可错并。
+  { standard: "空腹血糖", aliases: ["空腹血糖", "空腹葡萄糖"], veto: NOT_FASTING },
   { standard: "糖化血红蛋白", aliases: ["hba1c", "糖化血红蛋白a1c", "glycated hemoglobin"] },
 
   // ── 肝功 ──────────────────────────────────────────────────
   { standard: "丙氨酸氨基转移酶", aliases: ["谷丙转氨酶", "alt", "gpt"] },
   { standard: "天门冬氨酸氨基转移酶", aliases: ["谷草转氨酶", "ast", "got"] },
   { standard: "总胆红素", aliases: ["tbil", "total bilirubin"] },
-  { standard: "白蛋白", aliases: ["alb", "albumin"] },
+  { standard: "白蛋白", aliases: ["alb", "albumin"], veto: NOT_SERUM },
   { standard: "γ-谷氨酰转移酶", aliases: ["谷氨酰转肽酶", "ggt", "γ-gt", "ggtp"] },
 
   // ── 肾功 ──────────────────────────────────────────────────
   { standard: "肌酐", aliases: ["cr", "creatinine", "血肌酐"] },
-  { standard: "尿素氮", aliases: ["尿素", "bun", "urea nitrogen", "血尿素氮"] },
+  // 「尿素(UREA)」与「尿素氮(BUN)」数值标度差约 2.14 倍且常见单位都是 mmol/L，
+  // 错并不会被 unitChanged 拦下 → 不收「尿素」这个别名，让它自成一条线。
+  { standard: "尿素氮", aliases: ["尿素氮", "bun", "urea nitrogen", "血尿素氮"] },
   { standard: "尿酸", aliases: ["ua", "uric acid", "血尿酸"] },
 
   // ── 甲状腺 ────────────────────────────────────────────────
@@ -57,12 +79,17 @@ export const STANDARD_METRICS: StandardMetric[] = [
   { standard: "游离三碘甲状腺原氨酸", aliases: ["ft3", "游离t3", "free t3"] },
 ];
 
-/** aliases 索引（小写 → 标准名）。模块级构建一次。 */
-const ALIAS_INDEX: Map<string, string> = (() => {
-  const m = new Map<string, string>();
+/** aliases 索引（小写 → {标准名, veto}）。模块级构建一次。 */
+const ALIAS_INDEX: Map<string, { standard: string; veto?: RegExp }> = (() => {
+  const m = new Map<string, { standard: string; veto?: RegExp }>();
   for (const def of STANDARD_METRICS) {
-    m.set(def.standard.toLowerCase(), def.standard);
-    for (const a of def.aliases) m.set(a.toLowerCase(), def.standard);
+    const entry = { standard: def.standard, veto: def.veto };
+    m.set(def.standard.toLowerCase(), entry);
+    for (const a of def.aliases) {
+      const prev = m.get(a.toLowerCase());
+      // 别名冲突时保留「有 veto」的那条：veto 是更保守的处理
+      if (prev == null || (entry.veto && !prev.veto)) m.set(a.toLowerCase(), entry);
+    }
   }
   return m;
 })();
@@ -94,12 +121,37 @@ export function cleanLoose(rawName: string): string {
 export function normalizeMetricName(rawName: string): string {
   const cleaned = cleanLoose(rawName);
   if (cleaned === "") return "";
+
+  // 「尿素氮 BUN」这类「中文名 + 英文缩写」的写法：整串匹配不上，但拆开两半都指向同一标准名 ——
+  // 只有当两半**互相印证**时才合并（判据：都命中字典且标准名相同）。
+  // 不做「任一命中就合并」：那会把「甲状腺球蛋白 TG」并进甘油三酯（错并）。
+  const spaced = cleaned.lastIndexOf(" ");
+  if (spaced > 0) {
+    const head = cleaned.slice(0, spaced);
+    const tail = cleaned.slice(spaced + 1);
+    const h = lookup(head, rawName);
+    const t = lookup(tail, rawName);
+    if (h && t && h === t) return h;
+  }
+
+  return lookup(cleaned, rawName) ?? cleaned;
+}
+
+/** 别名查询（含上下文否决）；未命中返回 null */
+function lookup(cleaned: string, rawName: string): string | null {
   const hit = ALIAS_INDEX.get(cleaned.toLowerCase());
-  return hit ?? cleaned;
+  if (!hit) return null;
+  // 上下文否决：用**原始名**判定（cleanLoose 会剥掉括号，而「(餐后2h)」正在括号里）
+  if (hit.veto && hit.veto.test(rawName)) return null;
+  return hit.standard;
 }
 
 /** 该指标是否命中字典（前端可用于标注「已归一 / 仅原文名」） */
 export function isKnownMetric(rawName: string): boolean {
   const cleaned = cleanLoose(rawName);
-  return cleaned !== "" && ALIAS_INDEX.has(cleaned.toLowerCase());
+  if (cleaned === "") return false;
+  const hit = ALIAS_INDEX.get(cleaned.toLowerCase());
+  if (!hit) return false;
+  if (hit.veto && hit.veto.test(rawName)) return false;
+  return true;
 }

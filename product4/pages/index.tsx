@@ -134,6 +134,13 @@ async function api<T>(path: string, token: string, init?: RequestInit): Promise<
   return data;
 }
 
+/** 请求被用户主动取消（各浏览器/Node 抛的形态不同） */
+function isAbortError(e: unknown): boolean {
+  if (e == null || typeof e !== "object") return false;
+  const err = e as { name?: unknown; message?: unknown };
+  return err.name === "AbortError" || /abort/i.test(String(err.message ?? ""));
+}
+
 function formatValue(m: { valueText: string; unit: string | null }): string {
   return `${m.valueText}${m.unit ? ` ${m.unit}` : ""}`;
 }
@@ -418,7 +425,14 @@ export default function Home() {
       setChecked(new Set(data.metrics.map((_, i) => i)));
       setNotice(`解析出 ${data.metrics.length} 项指标，请核对原文片段后确认入库。`);
     } catch (e) {
-      handleErr(e);
+      // 用户主动取消不是错误：不弹红色报错，给中性提示并让按钮回正
+      // （ui-smoke-test 第 ④ 项「取消后状态是否回正」—— 初版这里会把 AbortError
+      // 当成请求失败上屏，用户点「取消」却收到一条红色错误）
+      if (isAbortError(e)) {
+        setNotice("已取消解析。");
+      } else {
+        handleErr(e);
+      }
     } finally {
       setExtracting(false);
       abortRef.current = null;

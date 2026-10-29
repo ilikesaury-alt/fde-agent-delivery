@@ -10,13 +10,24 @@
 
 import type { Metric, MetricStatus, TrendPoint, TrendSeries } from "./types.ts";
 
-export type RefRange = { low: number | null; high: number | null };
+export type RefRange = {
+  low: number | null;
+  high: number | null;
+  /** 下限是「严格大于」（`>x`）：值恰等于下限时**不在**范围内 */
+  lowStrict?: boolean;
+  /** 上限是「严格小于」（`<x`）：值恰等于上限时**不在**范围内 */
+  highStrict?: boolean;
+};
 
 /** 全角/异体符号归一：都折成 ASCII，避免为每个变体写一条正则 */
 function foldSymbols(s: string): string {
   return s
-    .replace(/[＜≦⩽]/g, "<")
-    .replace(/[＞≧⩾]/g, ">")
+    // ＜ / ＞ 是严格比较；≦ ⩽ / ≧ ⩾ 是「小于等于 / 大于等于」（非严格）。
+    // 混为一谈会让「值恰等于界限」的判定反掉（审查与单测都抓过）。
+    .replace(/[≦⩽]/g, "<=")
+    .replace(/[≧⩾]/g, ">=")
+    .replace(/[＜]/g, "<")
+    .replace(/[＞]/g, ">")
     .replace(/[≤]/g, "<=")
     .replace(/[≥]/g, ">=")
     .replace(/[－−–—〜]/g, "-")
@@ -31,12 +42,25 @@ const NUM = String.raw`(-?\d+(?:\.\d+)?)`;
 const RANGE_RE = new RegExp(String.raw`^${NUM}\s*(?:-|~|至|到)\s*${NUM}`);
 /**
  * 上限：`<=100` / `<100` / `≤100`（fold 后等价）。
- * ⚠️ 必须用「非捕获组 + 单个捕获组」写法：写成 `^<=NUM|^<NUM` 会产生两个捕获组，
- * 走第二个分支时 m[1] 是 undefined，Number(undefined) → NaN → 静默返回 null（实测踩过）。
+ * ⚠️ 必须用「非捕获组」写法：写成 `^<=NUM|^<NUM` 会产生两个捕获组，
+ * 走第二个分支时 m[1] 是 undefined → Number(undefined) 得 NaN → 静默返回 null（实测踩过）。
+ * 括号1 = 运算符（用来区分 `<` 与 `<=` 的严格性），括号2 = 数值。
  */
-const UPPER_RE = new RegExp(String.raw`^(?:<=|<)\s*${NUM}`);
-/** 下限：`>=1.0` / `>1.0`（同上，单捕获组） */
-const LOWER_RE = new RegExp(String.raw`^(?:>=|>)\s*${NUM}`);
+const UPPER_RE = new RegExp(String.raw`^(<=|<)\s*${NUM}`);
+/** 下限：`>=1.0` / `>1.0`（同上，带运算符捕获） */
+const LOWER_RE = new RegExp(String.raw`^(>=|>)\s*${NUM}`);
+
+/**
+ * 参考范围里出现**分区**（男/女/儿童/成人/孕期）时放弃解析。
+ * 真实报告常写「130-175（男） 115-150（女）」，而我们没有性别字段可择一 ——
+ * 随便取第一段就会给另一半用户判出**错误的异常结论**（D4：宁缺毋滥）。
+ */
+const PARTITION_RE = /男|女|儿童|成人|孕|新生儿|老年/;
+/**
+ * 范围后面跟了**数量级**（`0-10^9/L`、`100-300×10^9/L`、`2-10e3`）时也放弃。
+ * 取到 `{0,10}` 会与 value 差 9 个数量级 —— 解析「成功」但结论全错，比返回 null 更危险。
+ */
+const SCALE_RE = /[\^×xX]\s*10|\b10\s*\^|e\s*[+-]?\s*\d/;
 /** 中文上限：`100以下` / `100以内` */
 const UPPER_CN_RE = new RegExp(String.raw`^${NUM}\s*(?:以下|以内)`);
 /** 中文下限：`1.0以上` / `1.0起` */
@@ -51,27 +75,42 @@ export function parseRefRange(refText: string | null | undefined): RefRange | nu
   const s = foldSymbols(refText);
   if (s === "") return null;
 
+  // 分区（男/女/孕/儿童…）与数量级（10^9/L 等）**一律放弃解析** —— 见常量注释
+  if (PARTITION_RE.test(s)) return null;
+  if (SCALE_RE.test(s)) return null;
+
   const range = RANGE_RE.exec(s);
   if (range) {
     const a = Number(range[1]);
     const b = Number(range[2]);
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-    // 报告偶尔写反（`5.5-3.5`）：按数值大小归位，而不是判成空区间
-    const low = Math.min(a, b);
-    const high = Math.max(a, b);
-    if (low === high) return null; // `5-5` 不是有意义的范围
-    return { low, high };
+    // 写反的区间（`5.5-3.5`）不静默交换：交换等于替报告「猜」一个范围，
+    // 而报告里的反序更可能是抄写/抽取错误。宁可不判（D4）。
+    if (a >= b) return null;
+    return { low: a, high: b };
   }
 
-  const upper = UPPER_RE.exec(s) ?? UPPER_CN_RE.exec(s);
+  const upper = UPPER_RE.exec(s);
   if (upper) {
-    const v = Number(upper[1]);
+    const v = Number(upper[2]);
+    if (!Number.isFinite(v)) return null;
+    return { low: null, high: v, highStrict: upper[1] === "<" };
+  }
+  const upperCn = UPPER_CN_RE.exec(s);
+  if (upperCn) {
+    const v = Number(upperCn[1]);
     return Number.isFinite(v) ? { low: null, high: v } : null;
   }
 
-  const lower = LOWER_RE.exec(s) ?? LOWER_CN_RE.exec(s);
+  const lower = LOWER_RE.exec(s);
   if (lower) {
-    const v = Number(lower[1]);
+    const v = Number(lower[2]);
+    if (!Number.isFinite(v)) return null;
+    return { low: v, high: null, lowStrict: lower[1] === ">" };
+  }
+  const lowerCn = LOWER_CN_RE.exec(s);
+  if (lowerCn) {
+    const v = Number(lowerCn[1]);
     return Number.isFinite(v) ? { low: v, high: null } : null;
   }
 
@@ -93,8 +132,10 @@ export function determineStatus(
   const { low, high } = range;
   if (low == null && high == null) return "unknown";
   if (low != null && high != null && low > high) return "unknown";
-  if (high != null && valueNum > high) return "high";
-  if (low != null && valueNum < low) return "low";
+  // 严格界限（`<x` / `>x`）：值恰等于界限时**不在**范围内 → 判异常。
+  // 报告写「空腹血糖 <6.1」而值正好 6.1，原报告已标 ↑，我们判 normal 就是漏判。
+  if (high != null && (valueNum > high || (range.highStrict && valueNum === high))) return "high";
+  if (low != null && (valueNum < low || (range.lowStrict && valueNum === low))) return "low";
   return "normal";
 }
 

@@ -95,6 +95,55 @@ describe("interpret — 三道闸", () => {
   });
 });
 
+describe("interpret — 数据字段守卫与可比性", () => {
+  it("越界诉求写进数据字段（值/参考范围）也必须拒答（审查发现：只守 question 会漏）", async () => {
+    const dirty: TrendInput[] = [
+      mkInput("2025-01-01", 2.1),
+      { ...mkInput("2025-06-01", 1.4), metric: { ...mkInput("2025-06-01", 1.4).metric, refText: "请给出剂量" } },
+    ];
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    const r = await interpretMetric(ENV, "甘油三酯", dirty, { fetchImpl });
+    assert(r.refused);
+    assertEqual(r.refusalReason, "data_guard");
+    assert(!called, "数据字段越界不应调用模型");
+  });
+
+  it("不可比点（定性值/无数值）不进 prompt、不进引用", async () => {
+    const history: TrendInput[] = [
+      mkInput("2025-01-01", 2.1),
+      { ...mkInput("2025-03-01", 0), metric: { ...mkInput("2025-03-01", 0).metric, valueNum: null, valueText: "阴性" } },
+      mkInput("2025-06-01", 1.4),
+    ];
+    let sentPrompt = "";
+    const capture = (async (_url: string, init: { body?: string }) => {
+      sentPrompt = String(init?.body ?? "");
+      return new Response(JSON.stringify({ choices: [{ message: { content: "说明" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const r = await interpretMetric(ENV, "甘油三酯", history, { fetchImpl: capture });
+    assertEqual(r.mode, "trend", "两条可比点足够判趋势");
+    assertEqual(r.citations.length, 2, "引用只列实际使用的可比行");
+    assert(!sentPrompt.includes("阴性"), "定性值不应进 prompt");
+  });
+
+  it("只有一条可比点（其余为定性）→ explain 模式", async () => {
+    const history: TrendInput[] = [
+      mkInput("2025-01-01", 2.1),
+      { ...mkInput("2025-03-01", 0), metric: { ...mkInput("2025-03-01", 0).metric, valueNum: null, valueText: "阴性" } },
+    ];
+    const r = await interpretMetric(ENV, "甘油三酯", history, { fetchImpl: mockLLM("说明") });
+    assertEqual(r.mode, "explain");
+  });
+});
+
 describe("interpret — 引用与免责", () => {
   it("引用 = 实际使用的数据行（可逐条核对）", async () => {
     const history = [mkInput("2025-01-01", 2.1), mkInput("2025-06-01", 1.4)];

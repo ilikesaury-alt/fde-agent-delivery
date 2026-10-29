@@ -38,6 +38,36 @@ describe("metrics-dict — 归一", () => {
     assert(cleanLoose("ALT") !== cleanLoose("AST"), "ALT 与 AST 绝不能并成同一个");
   });
 
+  it("上下文否决：餐后/尿/甲状腺 等不同测项不得被并入（审查阻塞项）", () => {
+    // 餐后血糖 ≠ 空腹血糖（同单位，错并后无任何告警 → 假趋势 + 错误异常结论）
+    assertEqual(normalizeMetricName("葡萄糖(餐后2h)"), "葡萄糖");
+    assertEqual(normalizeMetricName("空腹血糖"), "空腹血糖");
+    // 尿糖 ≠ 空腹血糖
+    assertEqual(normalizeMetricName("尿糖"), "尿糖");
+    assertEqual(normalizeMetricName("GLU"), "glu");
+    // 甲状腺球蛋白 TG ≠ 甘油三酯
+    assertEqual(normalizeMetricName("甲状腺球蛋白 TG"), "甲状腺球蛋白 tg");
+    assertEqual(normalizeMetricName("TG"), "甘油三酯");
+    // 尿白细胞 ≠ 血常规白细胞计数
+    assertEqual(normalizeMetricName("尿白细胞"), "尿白细胞");
+    assertEqual(normalizeMetricName("白细胞"), "白细胞计数");
+    // 尿微量白蛋白 ≠ 血清白蛋白
+    assertEqual(normalizeMetricName("尿微量白蛋白"), "尿微量白蛋白");
+    assertEqual(normalizeMetricName("ALB"), "白蛋白");
+  });
+
+  it("「尿素」不并入「尿素氮」（标度差 2.14 倍且单位相同，错并无法告警）", () => {
+    assertEqual(normalizeMetricName("尿素"), "尿素");
+    assertEqual(normalizeMetricName("尿素氮 BUN"), "尿素氮");
+  });
+
+  it("中文名 + 缩写互相印证时才合并（两半必须指向同一标准名）", () => {
+    assertEqual(normalizeMetricName("谷丙转氨酶 ALT"), "丙氨酸氨基转移酶");
+    assertEqual(normalizeMetricName("促甲状腺激素 TSH"), "促甲状腺激素");
+    // 两半指向不同标准名 → 不合并（保持原文名）
+    assertEqual(normalizeMetricName("甲状腺球蛋白 TG"), "甲状腺球蛋白 tg");
+  });
+
   it("isKnownMetric 区分命中/未命中", () => {
     assert(isKnownMetric("TSH"));
     assert(!isKnownMetric("某罕见指标"));

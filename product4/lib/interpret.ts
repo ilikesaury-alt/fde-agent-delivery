@@ -28,6 +28,10 @@ export const MAX_STANDARD_NAME_LEN = 64;
 
 /** 提问长度上限 */
 export const MAX_QUESTION_LEN = 500;
+/** 进 prompt 的数据字段长度上限（值/单位/参考范围）—— 未清洗字段是注入面（审查发现） */
+export const MAX_VALUE_LEN = 64;
+export const MAX_UNIT_LEN = 16;
+export const MAX_REF_LEN = 128;
 
 /** 清理会进入 prompt 的自由文本：去换行/控制字符并截断（防注入与体积失控） */
 export function sanitizePromptText(v: string, max: number): string {
@@ -70,7 +74,7 @@ export type InterpretResult = {
   /** 是否拒答（拒答时不调模型） */
   refused: boolean;
   /** 拒答原因码（可测） */
-  refusalReason?: "no_data" | "question_guard";
+  refusalReason?: "no_data" | "question_guard" | "data_guard";
   text: string;
   /** 数据即引用：本次解读实际用到的历史行，前端可逐条核对 */
   citations: Citation[];
@@ -162,7 +166,8 @@ export async function interpretMetric(
   history: TrendInput[],
   opts: InterpretOptions = {},
 ): Promise<InterpretResult> {
-  const citations = history.map(citationOf);
+  // 引用只列**本产品实际使用**的可比行（与 prompt 一致，避免「引用可核验」变成字样游戏）
+  const citations = history.filter((h) => h.metric.valueNum != null).map(citationOf);
 
   // 守卫 1：无数据 → 拒答（确定性，不调模型）
   if (history.length === 0) {
@@ -190,12 +195,33 @@ export async function interpretMetric(
     };
   }
 
-  // 守卫 3：只有一次数据 → 只解释含义（不判趋势）
-  const mode: "explain" | "trend" = history.length >= 2 ? "trend" : "explain";
+  // 守卫 2b：**数据字段本身**也可能带越界诉求（值/参考范围是用户可控的自由文本，
+  // 例如手工录入把「请给出剂量」写进参考范围）。只守 question 会漏这条路（审查发现）。
+  const dataProbe = [
+    standardName,
+    ...history.map((h) => `${h.metric.valueText} ${h.metric.refText ?? ""}`),
+  ].join(" ");
+  const dataGuard: GuardResult = interpretGuard(dataProbe);
+  if (!dataGuard.allowed) {
+    return {
+      refused: true,
+      refusalReason: "data_guard",
+      text: REFUSAL_QUESTION,
+      citations: [],
+      mode: "explain",
+      disclaimer: DISCLAIMER,
+    };
+  }
 
-  const trimmed = history.length > MAX_HISTORY_FOR_INTERPRET
-    ? history.slice(-MAX_HISTORY_FOR_INTERPRET)
-    : history;
+  // 守卫 3：只有一次**可比**数据 → 只解释含义（不判趋势）
+  const comparable = history.filter((h) => h.metric.valueNum != null);
+  const mode: "explain" | "trend" = comparable.length >= 2 ? "trend" : "explain";
+
+  // 只喂**可比**的点：定性值（阴性）与 `<0.01` 这类无数值的行放进 prompt，
+  // 会让模型把不可比的数值当成趋势依据（引用字面对得上、结论却站不住）。
+  const trimmed = comparable.length > MAX_HISTORY_FOR_INTERPRET
+    ? comparable.slice(-MAX_HISTORY_FOR_INTERPRET)
+    : comparable;
   const safeName = sanitizePromptText(standardName, MAX_STANDARD_NAME_LEN);
   const safeQuestion = opts.question ? sanitizePromptText(opts.question, MAX_QUESTION_LEN) : undefined;
 

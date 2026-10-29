@@ -31,11 +31,14 @@ export type NewMetric = Metric;
 export type Repo = {
   insertReport(report: NewReport, metrics: Metric[]): Promise<void>;
   /**
-   * 向已有报告**追加**指标并更新 metric_count（手工补录合并用）。
+   * 向已有报告**追加**指标并同步 metric_count（手工补录合并用）。
    * 为什么不是「删了重写」：删-插之间有一个窗口，若插入失败，用户原有数据就没了。
-   * 追加是幂等无关的单向操作，失败最多是「这次没加进去」。
+   * 计数用**增量**（metric_count + n）而不是「读出来算好再写回」：后者在并发/重入时会把
+   * 计数永久少算（审查发现）。
    */
-  appendMetrics(reportId: string, metrics: Metric[], newCount: number): Promise<void>;
+  appendMetrics(reportId: string, metrics: Metric[]): Promise<void>;
+  /** 找某日期的手工报告（直接查，不经 listReports 的截断） */
+  findManualReport(profileId: string, checkDate: string): Promise<Report | null>;
   listReports(limit?: number): Promise<ReportSlim[]>;
   getReport(id: string): Promise<Report | null>;
   listMetricsByReport(reportId: string): Promise<Metric[]>;
@@ -186,7 +189,9 @@ export function createD1Repo(db: D1Like | undefined): Repo {
       }
     },
 
-    async appendMetrics(reportId, metrics, newCount) {
+    async appendMetrics(reportId, metrics) {
+      const inserted: string[] = [];
+      try {
       for (let i = 0; i < metrics.length; i += METRICS_PER_BATCH) {
         const batch = metrics.slice(i, i + METRICS_PER_BATCH);
         const valuesSql = batch.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
@@ -204,8 +209,35 @@ export function createD1Repo(db: D1Like | undefined): Repo {
           )
           .bind(...params)
           .run();
+        for (const m of batch) inserted.push(m.id);
       }
-      await db.prepare(`UPDATE reports SET metric_count = ? WHERE id = ?`).bind(newCount, reportId).run();
+      // 增量更新 + 命中行校验：报告已被另一标签页删掉时不能静默「成功」
+      const res = (await db
+        .prepare(`UPDATE reports SET metric_count = metric_count + ? WHERE id = ?`)
+        .bind(metrics.length, reportId)
+        .run()) as { meta?: { changes?: number }; changes?: number } | undefined;
+      const changes = res?.meta?.changes ?? res?.changes;
+      if (changes === 0) throw new Error(`报告不存在：${reportId}`);
+      } catch (err) {
+        // 半加比不加更糟：把本次插入的行删掉再抛
+        for (const id of inserted) {
+          await db.prepare(`DELETE FROM metrics WHERE id = ?`).bind(id).run().catch(() => {});
+        }
+        throw err;
+      }
+    },
+
+    async findManualReport(profileId, checkDate) {
+      const row = await db
+        .prepare(
+          `SELECT id, profile_id, source_type, file_name, check_date, hospital, raw_text, metric_count, created_at
+             FROM reports
+            WHERE profile_id = ? AND check_date = ? AND source_type = 'manual'
+            ORDER BY created_at ASC LIMIT 1`,
+        )
+        .bind(profileId, checkDate)
+        .first<ReportRow>();
+      return row ? toReport(row) : null;
     },
 
     async listReports(limit = 100) {
@@ -250,11 +282,15 @@ export function createD1Repo(db: D1Like | undefined): Repo {
                   r.check_date AS check_date
              FROM metrics m JOIN reports r ON r.id = m.report_id
             WHERE m.profile_id = ? AND m.value_num IS NOT NULL
-            ORDER BY r.check_date ASC LIMIT ?`,
+            ORDER BY r.check_date DESC LIMIT ?`,
         )
         .bind(profileId, Math.max(1, Math.min(limit, 20_000)))
         .all<MetricRow & { check_date: string }>();
-      return (results ?? []).map((row) => ({ metric: toMetric(row), checkDate: row.check_date }));
+      // 先取「最近 N 条」再翻成升序：直接用 ASC + LIMIT 会丢掉**最新**数据
+      //（约 300+ 份报告后可达），趋势图会静默少了最近几次（审查发现）
+      return (results ?? [])
+        .map((row) => ({ metric: toMetric(row), checkDate: row.check_date }))
+        .reverse();
     },
 
     async listMetricHistory(profileId, standardName) {
@@ -273,6 +309,10 @@ export function createD1Repo(db: D1Like | undefined): Repo {
     },
 
     async deleteReport(id) {
+      // 先确认存在：删除不存在的 id 必须返回 false（与内存实现同语义，
+      // 也让前端能区分「删掉了」和「本来就没有」）
+      const exists = await db.prepare(`SELECT id FROM reports WHERE id = ?`).bind(id).first<{ id: string }>();
+      if (!exists) return false;
       // 先删子行（不依赖 D1 是否开启外键级联），再删报告 —— 顺序固定，避免悬挂指标
       await db.prepare(`DELETE FROM metrics WHERE report_id = ?`).bind(id).run();
       const res = (await db.prepare(`DELETE FROM reports WHERE id = ?`).bind(id).run()) as
@@ -311,11 +351,18 @@ export function createMemoryRepo(): Repo & { _size(): { reports: number; metrics
       for (const m of rows) metrics.set(m.id, m);
     },
 
-    async appendMetrics(reportId, rows, newCount) {
+    async appendMetrics(reportId, rows) {
       const r = reports.get(reportId);
       if (!r) throw new Error(`报告不存在：${reportId}`);
       for (const m of rows) metrics.set(m.id, m);
-      reports.set(reportId, { ...r, metricCount: newCount });
+      reports.set(reportId, { ...r, metricCount: r.metricCount + rows.length });
+    },
+
+    async findManualReport(profileId, checkDate) {
+      for (const r of reports.values()) {
+        if (r.profileId === profileId && r.checkDate === checkDate && r.sourceType === "manual") return r;
+      }
+      return null;
     },
 
     async listReports(limit = 100) {
@@ -334,7 +381,9 @@ export function createMemoryRepo(): Repo & { _size(): { reports: number; metrics
     },
 
     async listTrendInputs(profileId, limit = 5000) {
-      return inputs((m) => m.profileId === profileId && m.valueNum != null).slice(0, limit);
+      // 与 D1 版同语义：截断时保留**最近**的检测（inputs 已按日期升序 → 从尾部取）
+      const all = inputs((m) => m.profileId === profileId && m.valueNum != null);
+      return all.length > limit ? all.slice(all.length - limit) : all;
     },
 
     async listMetricHistory(profileId, standardName) {

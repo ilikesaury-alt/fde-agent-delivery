@@ -2,11 +2,14 @@
 
 > 面向**下一个开发者会话**：现状、坑、下一步。读完应能直接接着干，不用翻聊天记录。
 > 最后更新：2026-10-29
+>
+> **Status：`ready-for-review`** —— 实现完成、证据齐、已上线；剩余的是「真实语料标定」等人做决策的事，
+> 故不用 `complete`（口径见 `handoff` 技能的 status vocabulary）。
 
 ## 1. 当前状态（一句话）
 
-**已上线并通过真环境验证**：version `b1ac8d2b-35d3-4310-9090-de2af6668474`，
-线上接口级 E2E 39/39、OCR 路径 10/10、UI 走查 26/26、真网关抽取评测行级 100%（28/28）。
+**已上线并通过真环境验证**：version `ad7dbe77-2152-48ea-a8e9-64804aa438ed`，
+线上接口级 E2E 39/39、OCR 路径 10/10、UI 走查 33/33、真网关抽取评测行级 100%（28/28）。
 
 需求口径与全部决策在 [CONTEXT.md](../CONTEXT.md)（只增不改）。交付/原理/部署文档：
 [交付文档](./features/health-track/health-track-交付文档.md) ·
@@ -34,11 +37,23 @@ product4/
 │   ├── llm.ts  http.ts  auth.ts  errors.ts
 ├── routes/api/{health,extract,reports,metrics,trends,interpret,ocr}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment
-├── test/*.ts                    104 项单测（node --experimental-strip-types）
+├── test/*.ts                    118 项单测（node --experimental-strip-types）
 ├── eval/                        真网关评测（抽取 + 红线）
 ├── scripts/{deploy.mjs,local-verify.mjs}
 └── e2e/{live-e2e.mjs,live-ocr.mjs,live-ui.mjs}   经 ego-browser 跑
 ```
+
+## 2.1 现状标注继承（来自 CONTEXT §7.3 `code-reality-check`）
+
+冷读时不凭记忆假设接口：
+
+- **已存在（改造/复制自其它产品）**：`callLLM` 调用口径（产品①）、`extractPdfText` / `renderPdfPages`（产品③）、
+  OCR 5016 自愈（产品③）、`checkAccessToken` / `authorize`（产品②③）、评测器结构（产品③）。
+  这些在④ 里是**独立副本**（各 Worker 独立部署，不跨产品 import）。
+- **待建（④ 自建）**：`lib/extract.ts`、`lib/trend.ts`、`lib/metrics-dict.ts`、`lib/interpret*.ts`、
+  `lib/repo.ts`（含 `appendMetrics`）、`lib/service.ts`、全部 `routes/api/*`、`pages/index.tsx`、
+  `db/migrations/0001`、`eval/*`、`e2e/*`。
+- **明确不复用**：`chunk.ts` / `embed.ts` / `retrieve.ts`（④ 无 Vectorize；复活条件见 CONTEXT「落选候选清单」）。
 
 ## 3. 五条不能破坏的纪律（破坏任意一条都是回退）
 
@@ -65,6 +80,10 @@ product4/
 | 截图 | `Page.captureScreenshot` 对外站也超时 | 环境限制，不提供截图证据；用 DOM 断言 |
 | E2E 假绿 | 用「元素存在」判成功，被上一条提示骗过 | 用 `waitText` 等内容包含目标文案 |
 | `localeCompare` | 无 locale 参数 → 跨平台排序不同（CI 挂） | 需确定性就用码点比较 |
+| 宽指标别名 | `血糖/glu/葡萄糖` 会吃掉餐后/OGTT/尿糖（同单位，无告警） | 别加宽别名；用 `veto` 上下文否决 |
+| 严格界限 | `<6.1` 与 `≤6.1` 同待遇 → 等号处漏判 | `RefRange` 带 `lowStrict/highStrict` |
+| 范围带分区/数量级 | `130-175（男）`、`0-10^9/L` 会「解析成功但结论全错」 | 命中就返回 null（宁可不判） |
+| 数据字段也是注入面 | 把越界诉求写进 `valueText`/`refText` 可绕过只守 `question` 的守卫 | 所有进 prompt 字段都清洗 + `data_guard` |
 | 正则双捕获组 | `^<NUM\|^<NUM` 走第二分支时 m[1] 是 undefined | 用 `(?:<=|<)\s*NUM` 单捕获组 |
 | 测试 helper 用 `??` | `valueNum: over.valueNum ?? 1.2` 让 `null` 变成 1.2 → 定性值用例永远测不出 | 用 `=== undefined ? x : y` |
 
@@ -74,6 +93,27 @@ product4/
 - Node 出不了网 → 线上验证只能走 `ego-browser nodejs < e2e/*.mjs`。
 - `npm install` 必须 `--ignore-scripts`（`.npmrc` 已设本地缓存）。
 - 密钥在 `product4/.secrets.json`（gitignore）。**不要**把密钥写进任何入库文件或文档。
+
+## 5.1 猜测 vs 已验证（严格分开，别把猜测当事实）
+
+**已验证（有证据）**
+- 线上可用、绑定齐全（ASSETS/DB/AI）、迁移已应用且台账无待办。
+- 抽取在本轮 6 份自造报告上行级 100%；红线守卫 10/10；无数据/红线提问各路径拒答正确且不调模型。
+- 确认闸不可绕过（客户端伪造 status 被服务端覆盖，有单测）。
+- 趋势点排序、参考范围带、单位/范围变化告警都在真实 UI 里渲染成功（DOM 断言）。
+- 手工补录用增量追加，原报告 id 不变（有测试）；同日手工报告用 `findManualReport` 直查（不经截断列表）。
+- 指标别名有**上下文否决**：`葡萄糖(餐后2h)`/`尿糖 GLU` 不会被并进空腹血糖，`甲状腺球蛋白 TG` 不会被并进甘油三酯，
+  `尿素` 不并入 `尿素氮`（各有单测）。
+- 参考范围的分区（男/女）与数量级（`0-10^9/L`）写法一律解析失败 → `unknown`（有单测）。
+
+**猜测（未验证，别当事实用）**
+- 真实体检报告的抽取准确率 —— 只会更低，跨页表格/脚注/合并单元格没有任何证据。
+- 「行级 100%」的稳定性 —— 6 次重复中 1 次 96.4%（漏一行定性指标），故**不能**当作确定性 100%。
+- 真实手机拍照的 OCR 质量 —— 合成扫描件（正向、清晰、无阴影）不代表真实场景。
+- 「营养 30 次历史足够」的截断阈值 —— 没做过对照实验。
+- 23 个指标字典的覆盖度 —— 只覆盖高频项，实际报告里未命中比例未知。
+- D1 无事务下的并发安全性 —— 单用户场景下概率极低，但**没有**并发测试。
+- 前端在 Safari / 移动端的表现 —— 只在 ego-browser（Chromium）里跑过。
 
 ## 6. 下一步（按价值排序）
 

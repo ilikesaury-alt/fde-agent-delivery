@@ -42,7 +42,9 @@ export async function saveReport(repo: Repo, input: SaveInput): Promise<{ report
     createdAt: now,
   };
 
-  const metrics: Metric[] = input.metrics.map((m) => ({
+  // 同一份报告里同一标准指标只保留一条（后填覆盖先填）：
+  // 否则同一天会出现两个同名趋势点（折线自我折返），解读历史里也会重复引用（审查发现）
+  const metrics: Metric[] = dedupeByName(input.metrics).map((m) => ({
     ...m,
     id: newId("mtr"),
     reportId,
@@ -66,23 +68,27 @@ export async function saveManualMetrics(
   checkDate: string,
   metrics: ExtractedMetric[],
 ): Promise<{ report: Report; metrics: Metric[] }> {
-  const existing = (await repo.listReports(200)).find(
-    (r) => r.checkDate === checkDate && r.sourceType === "manual",
-  );
+  // 同一次补录里重复的指标只保留最后一条：
+  // 不去重会让同一天出现两个同名点（趋势图同 x 轴两值，看起来像抖动），
+  // 抽取路径本来就按 `rawName|valueText` 去重，手工路径必须同口径。
+  const deduped = dedupeByName(metrics);
+  // 直接查库，而不是在 listReports(200) 的结果里筛：报告数 >200（或补录较旧日期）时
+  // 带截断的列表会找不到已有手工报告 → 新建第二份同日报告，归并语义失效（审查发现）
+  const existing = await repo.findManualReport(ACTIVE_PROFILE, checkDate);
 
   if (existing) {
     // 增量追加而不是「删了重写」：删-插之间若失败，用户原有数据就丢了。
     // 追加失败最多是「这次没加进去」，原有数据仍在。
     const now = Date.now();
     const current = await repo.listMetricsByReport(existing.id);
-    const added: Metric[] = metrics.map((m) => ({
+    const added: Metric[] = deduped.map((m) => ({
       ...m,
       id: newId("mtr"),
       reportId: existing.id,
       profileId: ACTIVE_PROFILE,
       createdAt: now,
     }));
-    await repo.appendMetrics(existing.id, added, current.length + added.length);
+    await repo.appendMetrics(existing.id, added);
     const report = (await repo.getReport(existing.id)) ?? {
       ...existing,
       rawText: manualRawText(checkDate, current.length + added.length),
@@ -95,9 +101,16 @@ export async function saveManualMetrics(
     fileName: null,
     checkDate,
     hospital: null,
-    rawText: manualRawText(checkDate, metrics.length),
-    metrics,
+    rawText: manualRawText(checkDate, deduped.length),
+    metrics: deduped,
   });
+}
+
+/** 按标准指标名去重（同批次内保留最后一条：后填的覆盖先填的） */
+export function dedupeByName<T extends { standardName: string }>(metrics: T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const m of metrics) byName.set(m.standardName, m);
+  return [...byName.values()];
 }
 
 /** 手工录入没有原文 —— 用结构化摘要代替，保持 rawText 非空（表约束 + 复核可读） */

@@ -31,11 +31,36 @@ describe("trend — 参考范围解析", () => {
     assertEqual(parseRefRange("3.5 至 5.5"), { low: 3.5, high: 5.5 });
   });
 
-  it("全角与异体符号归一（≤＜ 都当上限）", () => {
-    assertEqual(parseRefRange("≤100"), { low: null, high: 100 });
-    assertEqual(parseRefRange("＜100"), { low: null, high: 100 });
-    assertEqual(parseRefRange("≥1.0"), { low: 1, high: null });
-    assertEqual(parseRefRange("＞1.0"), { low: 1, high: null });
+  it("全角与异体符号归一（≤＜ 都当上限；≤ 为非严格、< 为严格）", () => {
+    assertEqual(parseRefRange("≤100"), { low: null, high: 100, highStrict: false });
+    assertEqual(parseRefRange("＜100"), { low: null, high: 100, highStrict: true }); // ＜ 是严格比较
+    assertEqual(parseRefRange("≦100"), { low: null, high: 100, highStrict: false }); // ≦ 是「小于等于」
+    assertEqual(parseRefRange("⩽100"), { low: null, high: 100, highStrict: false });
+    assertEqual(parseRefRange(">=1.0"), { low: 1, high: null, lowStrict: false });
+    assertEqual(parseRefRange("＞1.0"), { low: 1, high: null, lowStrict: true }); // ＞ 是严格比较
+    assertEqual(parseRefRange("≧1.0"), { low: 1, high: null, lowStrict: false });
+    assertEqual(parseRefRange("⩾1.0"), { low: 1, high: null, lowStrict: false });
+  });
+
+  it("严格界限（<x / >x）被记录：值恰等于界限时不在范围内", () => {
+    assertEqual(parseRefRange("<6.1"), { low: null, high: 6.1, highStrict: true });
+    // 报告写「<6.1」而值正好 6.1，原报告已标 ↑ → 必须判偏高，不能漏判（审查阻塞项）
+    assertEqual(determineStatus(6.1, parseRefRange("<6.1")), "high");
+    assertEqual(determineStatus(6.1, parseRefRange("≤6.1")), "normal");
+    assertEqual(determineStatus(1.0, parseRefRange(">1.0")), "low");
+    assertEqual(determineStatus(1.0, parseRefRange("≥1.0")), "normal");
+  });
+
+  it("分区范围（男/女/孕）→ null：没有性别字段就不能替人猜（审查阻塞项）", () => {
+    assertEqual(parseRefRange("130-175（男）115-150（女）"), null);
+    assertEqual(parseRefRange("3.5-5.5（成人）"), null);
+    assertEqual(parseRefRange("1.0-2.5（孕期）"), null);
+  });
+
+  it("带数量级的范围（0-10^9/L）→ null：取 {0,10} 会差 9 个数量级（审查阻塞项）", () => {
+    assertEqual(parseRefRange("0-10^9/L"), null);
+    assertEqual(parseRefRange("100-300×10^9/L"), null);
+    assertEqual(parseRefRange("2-10e3"), null);
   });
 
   it("中文上下限写法", () => {
@@ -47,8 +72,9 @@ describe("trend — 参考范围解析", () => {
     assertEqual(parseRefRange("0.45-1.7 mmol/L"), { low: 0.45, high: 1.7 });
   });
 
-  it("写反的区间按数值归位（不判成空区间）", () => {
-    assertEqual(parseRefRange("5.5-3.5"), { low: 3.5, high: 5.5 });
+  it("写反的区间 → null（不静默交换：交换等于替报告猜范围，反序更可能是抄写错误）", () => {
+    assertEqual(parseRefRange("5.5-3.5"), null);
+    assertEqual(parseRefRange("1.7-0.45"), null);
   });
 
   it("定性/文字描述 → null（宁可判 unknown，不猜）", () => {

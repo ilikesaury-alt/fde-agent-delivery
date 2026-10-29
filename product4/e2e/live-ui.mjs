@@ -78,6 +78,19 @@ await new Promise((r) => setTimeout(r, 1500));
 const errBanner = await page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel("error-banner"));
 check("令牌填入后无 401 报错", !errBanner.includes("访问令牌"), errBanner.slice(0, 60));
 
+/* 1.5 ui-smoke-test 四项断言（①空输入禁用 ②长等待有反馈 ③复制/下载 N/A ④取消可回正） */
+const btnState = () => page.evaluate((s) => {
+  const b = document.querySelector(s);
+  return { exists: Boolean(b), disabled: b ? b.disabled : null, label: b ? b.textContent : "" };
+}, sel("extract-btn"));
+
+const initialBtn = await btnState();
+check("① 空输入时「解析指标」按钮禁用（不是报错）", initialBtn.disabled === true, `disabled=${initialBtn.disabled}`);
+
+await page.fill(sel("report-text"), "   ");
+const blankBtn = await btnState();
+check("① 只有空白字符时按钮仍禁用", blankBtn.disabled === true, `disabled=${blankBtn.disabled}`);
+
 /* 2. 粘贴报告文本 → 解析 */
 const REPORT = `示例市第一医院 检验报告
 采样日期：2025-03-14
@@ -89,6 +102,12 @@ await page.fill(sel("report-text"), REPORT);
 check("报告文本已填入", (await page.evaluate((s) => document.querySelector(s).value.length, sel("report-text"))) > 50);
 
 await page.click(sel("extract-btn"));
+// ② 长等待必须有可见反馈：按钮文案变化 + 出现取消入口
+await new Promise((r) => setTimeout(r, 600));
+const busyBtn = await btnState();
+check("② 解析中按钮文案有反馈（解析中…）", busyBtn.label.includes("解析中"), busyBtn.label);
+check("② 解析中出现取消入口", (await countOf("extract-cancel")) >= 1);
+
 const previewShown = await waitTestId("preview-panel", { timeout: 150_000 });
 check("解析后出现预览确认面板", previewShown);
 
@@ -110,6 +129,22 @@ await page.click(sel("discard-preview"));
 await waitTestId("preview-panel", { gone: true, timeout: 10_000 });
 const afterDiscard = await countReports();
 check("放弃预览后数据库未增加", afterDiscard === before, `${before} → ${afterDiscard}`);
+
+/* 3.5 ④ 取消解析：状态必须回正，且不能把「用户取消」当错误上屏 */
+await page.click(sel("extract-btn"));
+await new Promise((r) => setTimeout(r, 800));
+if ((await countOf("extract-cancel")) >= 1) {
+  await page.click(sel("extract-cancel"));
+  const cancelNotice = await waitText("notice-banner", "已取消", 20_000);
+  check("④ 取消后有中性提示（不是红色报错）", cancelNotice, (await textOf("notice-banner")).slice(0, 40));
+  const errAfterCancel = await page.evaluate((s) => document.querySelector(s)?.textContent ?? "", sel("error-banner"));
+  check("④ 取消不产生错误提示", !errAfterCancel || !/abort|错误|失败/i.test(errAfterCancel), errAfterCancel.slice(0, 40));
+  const afterCancelBtn = await btnState();
+  check("④ 取消后按钮回到可点状态", afterCancelBtn.disabled === false && afterCancelBtn.label.includes("解析指标"), `${afterCancelBtn.label} disabled=${afterCancelBtn.disabled}`);
+} else {
+  // 抽取太快、来不及取消（上游很快返回）——诚实标注为未覆盖，不算通过
+  console.log("   （④ 取消未覆盖：本次抽取在 800ms 内已完成，来不及点取消）");
+}
 
 /* 4. 重新解析 → 确认入库 */
 await page.click(sel("extract-btn"));
