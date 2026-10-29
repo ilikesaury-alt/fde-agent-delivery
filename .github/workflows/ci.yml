@@ -102,7 +102,9 @@ jobs:
           MAGPIE_API_KEY: dummy-key
         run: |
           set -uo pipefail
-          npm run dev -- --port 5188 --strictPort > /tmp/vite-dev.log 2>&1 &
+          # --host 127.0.0.1：vite 默认只绑 localhost（runner 上可能解析为 IPv6 ::1），
+          # 而下方 curl 探的是 127.0.0.1 —— 绑定地址与探测地址必须一致（实测踩过）
+          npm run dev -- --port 5188 --strictPort --host 127.0.0.1 > /tmp/vite-dev.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:5188/api/health > /tmp/health.json 2>/dev/null; then
               echo "✔ dev server 就绪：$(cat /tmp/health.json)"
