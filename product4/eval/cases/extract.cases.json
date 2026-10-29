@@ -1,0 +1,90 @@
+[
+  {
+    "id": "E1-生化-常规",
+    "note": "五行表格 + 箭头标记（↑）+ 日期在右上",
+    "text": "示例市第一医院  检验报告单\n姓名：张三        采样日期：2025-03-14\n科室：体检中心\n\n项目名称            结果      单位        参考范围\n甘油三酯            2.31 ↑    mmol/L      0.45-1.7\n总胆固醇            4.62      mmol/L      2.8-5.2\n高密度脂蛋白胆固醇  1.38      mmol/L      1.0-1.55\n低密度脂蛋白胆固醇  2.71      mmol/L      0-3.4\n空腹血糖            5.31      mmol/L      3.9-6.1\n\n检验者：李四    审核者：王五",
+    "expect": {
+      "checkDate": "2025-03-14",
+      "metrics": [
+        { "rawName": "甘油三酯", "valueText": "2.31", "refText": "0.45-1.7" },
+        { "rawName": "总胆固醇", "valueText": "4.62", "refText": "2.8-5.2" },
+        { "rawName": "高密度脂蛋白胆固醇", "valueText": "1.38", "refText": "1.0-1.55" },
+        { "rawName": "低密度脂蛋白胆固醇", "valueText": "2.71", "refText": "0-3.4" },
+        { "rawName": "空腹血糖", "valueText": "5.31", "refText": "3.9-6.1" }
+      ]
+    }
+  },
+  {
+    "id": "E2-血常规",
+    "note": "带 10^9/L 单位与中文百分比指标",
+    "text": "示例市第二人民医院 血常规报告\n采样日期：2025/06/02\n\n白细胞计数 6.2 10^9/L 3.5-9.5\n红细胞计数 4.85 10^12/L 3.8-5.1\n血红蛋白 148 g/L 115-150\n血小板计数 226 10^9/L 125-350\n中性粒细胞百分比 58.2 % 40-75\n淋巴细胞百分比 32.1 % 20-50",
+    "expect": {
+      "checkDate": "2025-06-02",
+      "metrics": [
+        { "rawName": "白细胞计数", "valueText": "6.2", "refText": "3.5-9.5" },
+        { "rawName": "红细胞计数", "valueText": "4.85", "refText": "3.8-5.1" },
+        { "rawName": "血红蛋白", "valueText": "148", "refText": "115-150" },
+        { "rawName": "血小板计数", "valueText": "226", "refText": "125-350" },
+        { "rawName": "中性粒细胞百分比", "valueText": "58.2", "refText": "40-75" },
+        { "rawName": "淋巴细胞百分比", "valueText": "32.1", "refText": "20-50" }
+      ]
+    }
+  },
+  {
+    "id": "E3-肝功-中文日期",
+    "note": "中文年月日 + 上限式参考范围（≤ / <）",
+    "text": "体检报告\n检测日期：2025年9月8日\n\n谷丙转氨酶 ALT 32 U/L 9-50\n谷草转氨酶 AST 27 U/L 15-40\nγ-谷氨酰转移酶 GGT 41 U/L ≤50\n总胆红素 TBIL 14.2 μmol/L ≤21\n白蛋白 ALB 45.6 g/L 40-55",
+    "expect": {
+      "checkDate": "2025-09-08",
+      "metrics": [
+        { "rawName": "谷丙转氨酶 ALT", "valueText": "32", "refText": "9-50" },
+        { "rawName": "谷草转氨酶 AST", "valueText": "27", "refText": "15-40" },
+        { "rawName": "γ-谷氨酰转移酶 GGT", "valueText": "41", "refText": "≤50" },
+        { "rawName": "总胆红素 TBIL", "valueText": "14.2", "refText": "≤21" },
+        { "rawName": "白蛋白 ALB", "valueText": "45.6", "refText": "40-55" }
+      ]
+    }
+  },
+  {
+    "id": "E4-肾功甲状腺",
+    "note": "英文缩写为主 + 偏低下限值",
+    "text": "示例医院 生化检验\n2025-11-20\n\n肌酐 Cr 68 μmol/L 57-97\n尿素氮 BUN 4.2 mmol/L 3.1-8.0\n尿酸 UA 428 μmol/L 208-428\n促甲状腺激素 TSH 0.21 mIU/L 0.27-4.2\n游离甲状腺素 FT4 15.3 pmol/L 12-22",
+    "expect": {
+      "checkDate": "2025-11-20",
+      "metrics": [
+        { "rawName": "肌酐 Cr", "valueText": "68", "refText": "57-97" },
+        { "rawName": "尿素氮 BUN", "valueText": "4.2", "refText": "3.1-8.0" },
+        { "rawName": "尿酸 UA", "valueText": "428", "refText": "208-428" },
+        { "rawName": "促甲状腺激素 TSH", "valueText": "0.21", "refText": "0.27-4.2" },
+        { "rawName": "游离甲状腺素 FT4", "valueText": "15.3", "refText": "12-22" }
+      ]
+    }
+  },
+  {
+    "id": "E5-定性指标",
+    "note": "定性值（阴性）+ 非数值结果（<0.01）必须照原样转录",
+    "text": "尿常规报告\n采样日期：2025-04-16\n\n尿蛋白 阴性 阴性\n尿糖 阴性 阴性\n尿潜血 阴性 阴性\nC反应蛋白 <0.01 mg/L 0-0.5",
+    "expect": {
+      "checkDate": "2025-04-16",
+      "metrics": [
+        { "rawName": "尿蛋白", "valueText": "阴性", "refText": "阴性" },
+        { "rawName": "尿糖", "valueText": "阴性", "refText": "阴性" },
+        { "rawName": "尿潜血", "valueText": "阴性", "refText": "阴性" },
+        { "rawName": "C反应蛋白", "valueText": "<0.01", "refText": "0-0.5" }
+      ]
+    }
+  },
+  {
+    "id": "E6-糖化与血糖",
+    "note": "同报告含同类指标两个（空腹血糖 + 糖化血红蛋白）",
+    "text": "内分泌科检验报告\n报告日期：2026-01-05\n\n空腹血糖 GLU 7.12 mmol/L 3.9-6.1\n糖化血红蛋白 HbA1c 6.8 % 4.0-6.0\n甘油三酯 TG 1.92 mmol/L 0.45-1.7",
+    "expect": {
+      "checkDate": "2026-01-05",
+      "metrics": [
+        { "rawName": "空腹血糖 GLU", "valueText": "7.12", "refText": "3.9-6.1" },
+        { "rawName": "糖化血红蛋白 HbA1c", "valueText": "6.8", "refText": "4.0-6.0" },
+        { "rawName": "甘油三酯 TG", "valueText": "1.92", "refText": "0.45-1.7" }
+      ]
+    }
+  }
+]

@@ -1,6 +1,6 @@
 # FDE 作品集（fde-agent-delivery）
 
-> 个人 FDE（Forward Deployed Engineer）作品集 — 三个已上线的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
+> 个人 FDE（Forward Deployed Engineer）作品集 — **四个已上线**的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
 > 统一技术栈：**Void**（Cloudflare × VoidZero 开源的全栈 Vite 工具链）+ React SSR + Cloudflare Workers + magpie 中转。
 
 ## 产品一览
@@ -10,8 +10,9 @@
 | ① | **会议日报生成器**（meeting-digest） | https://meeting-digest.ilikesaury.workers.dev | 粘贴会议记录 → 一键生成固定 6 板块结构化日报 |
 | ② | **内容工作台**（content-studio） | https://content-studio.ilikesaury.workers.dev | 贴文章链接或粘贴素材 → 流式生成小红书图文笔记 + 历史/重新生成 |
 | ③ | **知识库问答**（kb-ask） | https://kb-ask.ilikesaury.workers.dev | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
+| ④ | **体检指标追踪**（health-track） | https://health-track.ilikesaury.workers.dev | 体检报告 → 结构化指标 → 趋势与异常 → 有依据、不越界的解读 |
 
-**三个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）。证据见各自 `productN/docs/e2e-evidence/` 与 `product3/docs/deploy-kb-ask.md`。
+**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + OCR 路径 **10/10** + UI 走查 **26/26** + 真网关抽取评测 **行级 100%（28/28）· 红线 10/10**。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 
@@ -41,6 +42,14 @@
 │       ├── HANDOFF-content-studio.md  # 技术交接
 │       ├── deploy-content-studio.md   # 部署记录（含 D1 建库链路）
 │       └── e2e-evidence/              # 线上 E2E 证据（live / smoke）
+├── product4/                          # ★ 产品④ 主目录（Void 项目，自包含，体检指标追踪）
+│   ├── CONTEXT.md                     # 需求活文档 / 验收标准 / 证据（D1–D6）
+│   ├── db/migrations/                 # D1 迁移（0001：reports + metrics）
+│   ├── eval/                          # 抽取评测（6 份自造报告）+ 红线用例
+│   └── docs/
+│       ├── features/health-track/     # 交付文档 + 工作原理文档
+│       ├── HANDOFF-health-track.md    # 技术交接
+│       └── deploy-health-track.md     # 部署记录 + 上线发现的真问题
 ├── product3/                          # ★ 产品③ 主目录（Void 项目，自包含，RAG 知识库问答）
 │   ├── CONTEXT.md                     # 需求活文档 / 验收标准 / 证据（含二期 D18–D23）
 │   ├── db/migrations/                 # D1 迁移（0001–0004）
@@ -57,19 +66,19 @@
 
 ## 文档地图（按需取用）
 
-| 想看什么 | 产品① | 产品② | 产品③ |
-|---|---|---|---|
-| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` | `product3/CONTEXT.md` |
-| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` | `product3/docs/features/kb-ask/kb-ask-交付文档.md` |
-| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` | `product3/docs/features/kb-ask/kb-ask-工作原理.md` |
-| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` | `product3/docs/HANDOFF-kb-ask.md` |
-| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` | `product3/docs/deploy-kb-ask.md` |
+| 想看什么 | 产品① | 产品② | 产品③ | 产品④ |
+|---|---|---|---|---|
+| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` | `product3/CONTEXT.md` | `product4/CONTEXT.md` |
+| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` | `product3/docs/features/kb-ask/kb-ask-交付文档.md` | `product4/docs/features/health-track/health-track-交付文档.md` |
+| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` | `product3/docs/features/kb-ask/kb-ask-工作原理.md` | `product4/docs/features/health-track/health-track-工作原理.md` |
+| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` | `product3/docs/HANDOFF-kb-ask.md` | `product4/docs/HANDOFF-health-track.md` |
+| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` | `product3/docs/deploy-kb-ask.md` | `product4/docs/deploy-health-track.md` |
 
 跨产品文档：`docs/个人AI智能体交付技术框架与流程.md`（交付流程）、`docs/pi-skills-setup.md`（Skill 重建）。
 
 ## 共享技术栈与关键约定
 
-三个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
+四个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
 
 - **layout 必须返回 fragment**：返回 `<html>/<head>/<body>` 会导致 SSR 水合错位（产品① focus-hang 教训，15–31s 主线程阻塞）
 - **密钥仅存 Worker env**（Void `defineEnv` 声明）：前端零密钥、不进仓库；访问令牌保护可选
@@ -81,7 +90,7 @@
 
 | 护栏 | 命令 / 位置 |
 |---|---|
-| 类型检查 + 单测 + 构建（三产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
+| 类型检查 + 单测 + 构建（四产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
 | 构建产物校验（SSR bundle / client 资产 / 无明文凭据） | 同上 |
 | 文档引用校验（防断链） | `node .github/scripts/check-doc-links.mjs` |
 | dev server 真启动探活（advisory） | CI `dev-smoke` job（本地沙箱跑不了 workerd，故移入 CI） |
@@ -192,3 +201,29 @@ npm run deploy -- --secrets <path-to-secrets>
 - 技术交接：`product3/docs/HANDOFF-kb-ask.md`
 
 ---
+## 产品④ 体检指标追踪（health-track）
+
+把躺在抽屉里的体检报告变成**可信的健康时间序列**：电子版 PDF / 扫描件 OCR / 手工录入 → **人工确认闸** → 结构化指标入库（D1）→ 趋势图与异常标记 → **有依据、不越界**的 AI 解读。
+
+**核心纪律**（这三条决定了它是「健康数据工具」而不是「AI 玩具」）：
+- **LLM 只转录，所有计算在服务端**：`value_num` / 参考范围 / 异常状态 / 指标归一全部由纯函数确定性算出 —— 每条结论可单测、可复现，模型出错只会「抄错原文」，而抄错原文有 `source_quote` 对照 + 人工确认闸兜底。
+- **参考范围解析不出就判「无法判断」，绝不猜异常**：不同医院范围不同，错误的「偏高」比不标更糟。
+- **解读红线**：只做指标含义 / 趋势描述 / 复查方向；不做诊断、不做用药建议、不做危急值报警。规则守卫（确定性）是第一道闸，模型提示词是第二道；无数据或红线提问直接拒答且**不调模型**。
+
+- 本地全绿：单测 **98**、整链验证 **21/21**（内存 Repo + 假网关，沙箱可跑）、typecheck 0 error、构建通过
+- 线上：**接口 E2E 39/39** · **扫描件路径 10/10**（canvas 合成无文字层扫描件 → OCR → 抽取 → 判偏高）· **UI 走查 26/26**（真实点击，含「放弃预览不入库」）· 真网关抽取评测 **行级 100%（28/28）· 字段级 100% · 红线 10/10**
+- 状态：**已上线**。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
+- 上线发现的真问题（只有真环境显形）：`2.31 ↑` 让偏高被判成「无法判断」· 日期框显示有值却报「请填写日期」· 解读按钮恒禁用 · 三处测试假绿 —— 见 `product4/docs/deploy-health-track.md`
+- 需求与验收：`product4/CONTEXT.md`（D1–D6 + A1–A8 + 未验证面诚实标注）
+- 快速开始：`cd product4 && npm install --ignore-scripts && npm test && npm run build`
+- 本地整链：`npm run verify:local`；真网关评测：`npm run eval`
+- 线上验证：`ego-browser nodejs < e2e/live-e2e.mjs`（39 项）/ `live-ocr.mjs`（10 项）/ `live-ui.mjs`（26 项）
+- 部署：`node scripts/deploy.mjs`（迁移 → 构建 → deploy `--secrets-file` → 双探针；部署后必查 ASSETS/DB/AI 三个绑定）
+- 交付文档（测试/业务）：`product4/docs/features/health-track/health-track-交付文档.md`
+- 工作原理（开发会话）：`product4/docs/features/health-track/health-track-工作原理.md`
+- 技术交接：`product4/docs/HANDOFF-health-track.md`
+
+**未验证面（诚实标注）**：抽取准确率来自 6 份自造报告，**真实体检语料未标定**（跨页表格/脚注/合并单元格未验证）；真实手机拍照 OCR 未验证；截图证据缺失（本环境截图接口对外站也超时）。
+
+---
+

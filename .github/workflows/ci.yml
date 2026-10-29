@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        product: [product1, product2, product3]
+        product: [product1, product2, product3, product4]
     defaults:
       run:
         working-directory: ${{ matrix.product }}
