@@ -34,7 +34,9 @@
    - 电子版 PDF：`extractPdfText`（pdf.js，仅浏览器）→ 纯文本。无文字层则抛 `no_text`，
      UI 引导走 OCR 而不是「假装成功」。
    - 扫描件：`renderPdfPages` 渲染前 ≤5 页为 JPEG → 逐页 `POST /api/ocr` → Worker 调
-     Workers AI 视觉模型 → 文本。**单页失败只跳过该页**（标记出来），不整批失败。
+    **浏览器本地** PaddleOCR（PP-OCRv5 + ONNX Runtime WASM，跑在 Web Worker 里）→ 带坐标的文本框。
+    然后按 y 聚行、按表头 x 区间定列做**确定性表格重建**（`lib/table-reconstruct.ts`），
+    再单独从页脚提取报告日期。**单页失败只跳过该页**（标记出来），不整批失败。
    - 粘贴：直接用。
 2. **抽取**（`POST /api/extract`，**不落库**）
    - 构造 system prompt：明确「只转录、不计算、原文没有的字段一律 null、source_quote 必须原样截取」。

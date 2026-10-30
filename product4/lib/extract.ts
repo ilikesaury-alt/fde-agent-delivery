@@ -16,7 +16,7 @@ import { ERR, ExtractError } from "./errors.ts";
 import { MAX_FIELD_CHARS } from "./http.ts";
 import { callLLM, LLMError, MissingConfigError, type ChatMessage, type LLMEnv } from "./llm.ts";
 import { normalizeMetricName } from "./metrics-dict.ts";
-import { cleanValueText, determineStatus, parseRefRange, parseValueNum } from "./trend.ts";
+import { cleanValueText, determineStatus, parseRefRange, parseValueBound, parseValueNum } from "./trend.ts";
 import type { ExtractedMetric, ExtractedReport } from "./types.ts";
 
 /** 电子版报告文本上限（Void env 可覆盖）：超长直接拒绝，不做静默截断（截断会漏掉指标） */
@@ -48,6 +48,11 @@ const SYSTEM_PROMPT = `你是体检报告结构化助手。你的唯一任务是
 7. check_date 取报告上的「采样日期/检测日期/报告日期」，格式 YYYY-MM-DD；原文只有
    年月日中文写法时也要转成该格式；确实找不到则用 null。
 8. 定性指标（阴性/阳性/未见异常）照原样转录到 value_text，不要转成数字。
+9. 只转录**检验项目表格里的行**。页眉页脚、患者信息（姓名/性别/年龄/病历号/诊号/条码）、
+   科室/标本/医师、时间戳（申请/采集/接收/报告时间）、联系电话、地址、声明/备注、
+   「第N页 共N页」等**一律不要**当成指标。这些字段不是检验结果，混进来会变成假指标。
+10. 扫描件文本常把同一个项目的「名称/结果/单位/参考范围」**拆到相邻多行**（尤其 OCR 结果）。
+    遇到这种情况要按原文顺序把它们归回同一条指标；不要因为字段分行就整行丢弃。
 
 输出 JSON 结构：
 {
@@ -162,7 +167,7 @@ export function toExtractedMetric(raw: RawMetric): ExtractedMetric | null {
     refHigh: ref?.high ?? null,
     refText: clip(refText, 200),
     // 状态由服务端算 —— 绝不信任模型给的 status
-    status: determineStatus(valueNum, ref),
+    status: determineStatus(valueNum, ref, parseValueBound(valueText)),
     sourceQuote,
   };
 }
@@ -177,8 +182,10 @@ export function validateExtracted(data: unknown): ExtractedReport {
   }
   const obj = data as Record<string, unknown>;
 
+  // 日期只是**建议值**：确认识别不到的日期不该毁掉整次抽取 ——
+  // 真实报告实测（扫描件丢失页脚时间块）就栽在这里：指标全都抽出来了，
+  // 却因为 check_date 为 null 被整份丢弃（真缺陷）。日期由用户在确认闸补填，不猜。
   const checkDate = normalizeDate(obj.check_date ?? obj.checkDate ?? obj.date);
-  if (!checkDate) throw new ExtractError("extractInvalid");
 
   const rawMetrics = obj.metrics ?? obj.items ?? obj.indicators;
   if (!Array.isArray(rawMetrics) || rawMetrics.length === 0) {
@@ -236,7 +243,8 @@ export async function extractReport(
   ];
 
   let lastInvalid: ExtractError | null = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  let budget = retries;
+  for (let attempt = 0; attempt <= budget; attempt++) {
     let content: string;
     try {
       content = await callLLM(env, messages, {
@@ -246,7 +254,17 @@ export async function extractReport(
       });
     } catch (err) {
       if (err instanceof MissingConfigError) throw err;
-      if (err instanceof LLMError) throw new ExtractError("extractFailed", err.message);
+      if (err instanceof LLMError) {
+        // 上游「200 但空内容」是退化响应（真实报告实测 84s 后返回空），瞬时性质，
+        // 原实现直接失败 → 一次抖动就毁掉整次抽取。这里给它**一次**额外机会，
+        // 且不吞掉用户可见的错误文案；错误码类失败仍不重试（②③ 的限流教训）。
+        if (err.reason === "empty" && attempt === 0) {
+          console.warn("[extract] empty content, retrying once");
+          budget = Math.max(budget, 1);
+          continue;
+        }
+        throw new ExtractError("extractFailed", err.message);
+      }
       throw err;
     }
 

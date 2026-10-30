@@ -13,12 +13,22 @@ export class MissingConfigError extends Error {
 }
 
 /** LLM 调用失败（网络/超时/限流/上游 5xx），文案面向终端用户 */
+export type LLMErrorReason = "empty" | "status" | "exception";
+
 export class LLMError extends Error {
   status: number;
-  constructor(message = "AI 服务暂不可用，请检查配置或稍后重试。", status = 0) {
+  /**
+   * 失败性质，决定调用方**能否重试**：
+   * - `empty`：上游 200 但内容为空（退化响应，瞬时，可重试）
+   * - `status`：上游给了错误码（401/429/5xx，重试只会放大限流）
+   * - `exception`：网络/超时/解析失败（重试会再等一个超时，通常无益）
+   */
+  reason: LLMErrorReason;
+  constructor(message = "AI 服务暂不可用，请检查配置或稍后重试。", status = 0, reason?: LLMErrorReason) {
     super(message);
     this.name = "LLMError";
     this.status = status;
+    this.reason = reason ?? (status ? "status" : "exception");
   }
 }
 
@@ -58,7 +68,11 @@ function debugLog(status: number | string, detail: string): void {
   console.warn(`[llm] upstream ${status}: ${detail.slice(0, 300)}`);
 }
 
-/** 非流式调用。失败统一收敛为 LLMError，不把上游堆栈/响应体泄露给前端。 */
+/**
+ * 非流式调用。失败统一收敛为 LLMError，不把上游堆栈/响应体泄露给前端。
+ * `reason` 供调用方判断**能否重试**：`empty` 是退化响应（瞬时，可重试），
+ * `status`/`exception` 是确定性或环境性失败（不重试，避免放大限流）。
+ */
 export async function callLLM(
   e: LLMEnv,
   messages: ChatMessage[],
@@ -98,14 +112,14 @@ export async function callLLM(
     const content = data.choices?.[0]?.message?.content;
     if (typeof content !== "string" || content.trim().length === 0) {
       debugLog("empty", JSON.stringify(data).slice(0, 300));
-      throw new LLMError("AI 服务返回了空内容，请稍后重试。");
+      throw new LLMError("AI 服务返回了空内容，请稍后重试。", 0, "empty");
     }
     return content;
   } catch (err) {
     if (err instanceof LLMError || err instanceof MissingConfigError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     debugLog("exception", msg);
-    throw new LLMError();
+    throw new LLMError(undefined, 0, "exception");
   } finally {
     clearTimeout(timeout);
   }

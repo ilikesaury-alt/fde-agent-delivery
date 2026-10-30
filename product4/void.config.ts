@@ -22,19 +22,31 @@ export default defineConfig({
       }
     ],
     /**
-     * Workers AI（扫描件 OCR 视觉模型）。
-     * 与产品③ 不同：本产品**不需要** Vectorize —— 解读的数据全在 D1 行里（本人历史），
-     * 不做语义检索（方案「落选候选清单」已记录该决策与复活条件）。
+     * 与产品③ 不同：本产品**不需要** Vectorize（解读的数据全在 D1 行里，不做语义检索），
+     * 也**不需要** Workers AI —— 扫描件识别改在**浏览器**跑 PaddleOCR（图片不出设备），
+     * 决策与实测见 CONTEXT §10。
      */
-    "ai": {
-      "binding": "AI"
-    }
   },
   /**
    * 站点级 head 默认值。
    * ⚠️ 不能写在 pages/layout.tsx 的 <head> 里：layout 必须返回 fragment，
    * 输出 <html>/<head>/<body> 会造成 SSR 水合错位 → focus-hang（产品①踩过）。
    */
+  /**
+   * 响应头（Void 的 routing.headers 机制，见 node_modules/void/docs/guide/edge/headers.md）。
+   *
+   * COOP + COEP = **跨源隔离**，是 ONNX Runtime 多线程 WASM 的前提（SharedArrayBuffer）。
+   * 实测收益：同一页扫描件 70.5s → 46.1s。
+   * 代价：第三方 no-cors 子资源会被拦（本站没有这类资源；模型 tar 走 CORS fetch，实测可用）。
+   */
+  "routing": {
+    "headers": {
+      "/*": [
+        "Cross-Origin-Opener-Policy: same-origin",
+        "Cross-Origin-Embedder-Policy: require-corp"
+      ]
+    }
+  },
   "head": {
     "titleTemplate": "%s",
     "htmlAttrs": { "lang": "zh-CN" },

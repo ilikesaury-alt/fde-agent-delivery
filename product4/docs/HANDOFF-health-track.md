@@ -37,7 +37,7 @@ product4/
 │   ├── llm.ts  http.ts  auth.ts  errors.ts
 ├── routes/api/{health,extract,reports,metrics,trends,interpret,ocr}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment
-├── test/*.ts                    118 项单测（node --experimental-strip-types）
+├── test/*.ts                    128 项单测（node --experimental-strip-types）
 ├── eval/                        真网关评测（抽取 + 红线）
 ├── scripts/{deploy.mjs,local-verify.mjs}
 └── e2e/{live-e2e.mjs,live-ocr.mjs,live-ui.mjs}   经 ego-browser 跑
@@ -84,6 +84,14 @@ product4/
 | 严格界限 | `<6.1` 与 `≤6.1` 同待遇 → 等号处漏判 | `RefRange` 带 `lowStrict/highStrict` |
 | 范围带分区/数量级 | `130-175（男）`、`0-10^9/L` 会「解析成功但结论全错」 | 命中就返回 null（宁可不判） |
 | 数据字段也是注入面 | 把越界诉求写进 `valueText`/`refText` 可绕过只守 `question` 的守卫 | 所有进 prompt 字段都清洗 + `data_guard` |
+| 视觉模型读中文表格 | llama-3.2-11b-vision 在真实扫描件上值错行/名字错/挂死 | 换浏览器本地 PaddleOCR（有检测框 → 确定性重建表格） |
+| SDK 自带 worker | 预打包 worker 内联 28.2MB jsep 运行时 → 超 Workers 25MiB 单文件上限 | 自己开 worker + SDK inline 跑（plain 运行时 14.2MB） |
+| Worker 里没 DOM | `document` / `HTMLImageElement` 未定义（opencv-js imread） | 最小 DOM shim + 构造器占位类（`instanceof` 恒 false） |
+| 多线程 WASM | 单线程 70.5s/页 | `void.config` 的 `routing.headers` 下发 COOP+COEP → 12–20s/页 |
+| 页脚混入指标 | 「申请时间：…」落进名称/结果列 | `isMetricRow`（名称不含冒号、不以页脚词开头） |
+| 日期被过滤掉 | 页脚是日期唯一来源，过滤后趋势全堆「今天」 | `findReportDate` 单独提取 + 补一行 `检测日期：` |
+| OCR 单位混淆 | `IU/m1`（l→1） | `normalizeUnitText` 只做能确定的替换 |
+| e2e 注入文件 | React 未水合时 change 事件被静默丢掉（页面一片安静） | 注入后看「进度是否出现」再判定，最多重试 6 次 |
 | 正则双捕获组 | `^<NUM\|^<NUM` 走第二分支时 m[1] 是 undefined | 用 `(?:<=|<)\s*NUM` 单捕获组 |
 | 测试 helper 用 `??` | `valueNum: over.valueNum ?? 1.2` 让 `null` 变成 1.2 → 定性值用例永远测不出 | 用 `=== undefined ? x : y` |
 
@@ -109,11 +117,26 @@ product4/
 **猜测（未验证，别当事实用）**
 - 真实体检报告的抽取准确率 —— 只会更低，跨页表格/脚注/合并单元格没有任何证据。
 - 「行级 100%」的稳定性 —— 6 次重复中 1 次 96.4%（漏一行定性指标），故**不能**当作确定性 100%。
+- **真实扫描件只有 1 份**（2026-10-29）：跨页表格、合并单元格、彩色底纹、手机拍照（透视/阴影）全无证据。
+- **WebGPU 未启用**：显式 `backend: "wasm"`（WebGPU 需另一份 29.5MB 运行时，托管方式未解决）。
+- **模型依赖百度 CDN**：离线不可用；自托管受 Workers 静态资源单文件 25MiB 限制（可用 R2）。
 - 真实手机拍照的 OCR 质量 —— 合成扫描件（正向、清晰、无阴影）不代表真实场景。
 - 「营养 30 次历史足够」的截断阈值 —— 没做过对照实验。
 - 23 个指标字典的覆盖度 —— 只覆盖高频项，实际报告里未命中比例未知。
 - D1 无事务下的并发安全性 —— 单用户场景下概率极低，但**没有**并发测试。
 - 前端在 Safari / 移动端的表现 —— 只在 ego-browser（Chromium）里跑过。
+
+## 5.2 扫描件路径现状（2026-10-29 更换引擎后）
+
+| 项 | 现状 |
+|---|---|
+| 引擎 | 浏览器本地 PaddleOCR.js（PP-OCRv5 mobile，ONNX Runtime WASM，Web Worker 内） |
+| 输入 | 电子版 PDF → pdf.js 抽文字（不经 OCR）；扫描件 PDF → 渲染页图（scale 2）→ 本地 OCR |
+| 表格重建 | `lib/table-reconstruct.ts`：y 聚行（剔高度离群框）+ 表头 x 区间定列 + 单位修正 |
+| 日期 | `findReportDate` 从全部行提取（采集>报告>申请），补 `检测日期：YYYY-MM-DD` 到文本开头 |
+| 服务端 | **不再有** `/api/ocr`、`lib/ocr.ts`、`AI` 绑定；旧路由返回 404（有 e2e 断言） |
+| 性能 | 单页 12–20s（4 线程 WASM）；首次需下载模型 20.5MB（走百度 CDN，浏览器缓存） |
+| 证据 | `e2e/live-scan.mjs` 真实扫描件 11/11；`test/table-reconstruct.test.ts` 用真实几何夹具 |
 
 ## 6. 下一步（按价值排序）
 

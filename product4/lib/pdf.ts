@@ -7,11 +7,12 @@
  *   再走同一条「文本 → 切分 → 嵌入」管道，Worker 侧零改动。
  *
  * 边界（CONTEXT §7.2）：**扫描件（图片型 PDF）抽不出文本** → 交给 OCR 通道
- * （二期 `renderPdfPages` 把页面渲染成 JPEG，Worker 侧 `lib/ocr.ts` 调视觉模型识别）。
+ * （`renderPdfPages` 把页面渲染成 JPEG，交给浏览器端 OCR：见 `lib/ocr-client.ts`、
+ *  表格重建见 `lib/table-reconstruct.ts`）。
  * 仍然不做「假装成功」：抽不出文字就说抽不出，让用户选「OCR 识别」或粘贴。
  */
 
-/** 与 lib/ocr.ts 的 MAX_OCR_PAGES 必须一致（单测有一条对账） */
+/** 单次导入渲染页数上限（渲染一页 A4@scale2 位图约 30MB，连渲多页会顶内存） */
 export const PDF_MAX_OCR_PAGES = 5;
 
 export type PdfPageImage = {

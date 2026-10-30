@@ -17,8 +17,6 @@ export default defineEnv({
    */
   ACCESS_TOKEN: string().optional(),
 
-  /** 覆盖 OCR 视觉模型（默认 llama-3.2-11b-vision，MVP 见 CONTEXT 方案） */
-  OCR_MODEL: string().optional(),
 
   /** 电子版报告文本上限（字符数，默认 60000） */
   MAX_REPORT_CHARS: string().optional(),

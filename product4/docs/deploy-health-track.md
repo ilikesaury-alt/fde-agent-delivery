@@ -12,7 +12,7 @@
 | 当前版本 | `ad7dbe77-2152-48ea-a8e9-64804aa438ed`（2026-10-29） |
 | Account | `e279d1f8bcb29c72945905179e57faeb` |
 | D1 | `health-track-db` / `80e024db-b7ff-4d8f-b012-0d0c964022a4` |
-| 绑定 | `DB`（D1）· `AI`（Workers AI）· `ASSETS` · 无 Vectorize |
+| 绑定 | `DB`（D1）· `ASSETS` · **无 AI**（扫描件改浏览器本地识别，见 CONTEXT §10） |
 | 表 | `reports`、`metrics`（migration `0001_reports_metrics`，已应用，台账无待办） |
 
 ## 首次上线（2026-10-29）
@@ -34,7 +34,6 @@ npx wrangler versions view <version-id>    # 三个绑定齐全：ASSETS / DB / 
 实测输出（当前版本）：
 ```
 env.DB (health-track-db)   D1 Database
-env.AI                     AI
 env.ASSETS                 Assets
 env.MAGPIE_BASE_URL / _API_KEY / _MODEL / ACCESS_TOKEN   Environment Variable (hidden)
 ```

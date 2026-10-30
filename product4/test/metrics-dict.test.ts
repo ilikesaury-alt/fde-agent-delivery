@@ -68,6 +68,17 @@ describe("metrics-dict — 归一", () => {
     assertEqual(normalizeMetricName("甲状腺球蛋白 TG"), "甲状腺球蛋白 tg");
   });
 
+  it("乙肝五项归一（真实报告实测的定量组套）", () => {
+    assertEqual(normalizeMetricName("HBsAg"), "乙肝表面抗原");
+    assertEqual(normalizeMetricName("HBsAg(H)"), "乙肝表面抗原"); // 高值稀释复测，同一分析物
+    // 清洗会剥掉 `*` 与括号内的方法学标记（(CLIA)），与定量的别名同归一处
+    assertEqual(normalizeMetricName("*乙肝表面抗原定量(CLIA)"), "乙肝表面抗原");
+    assertEqual(normalizeMetricName("HBsAb"), "乙肝表面抗体");
+    assertEqual(normalizeMetricName("HBeAg"), "乙肝e抗原");
+    assertEqual(normalizeMetricName("HBeAb"), "乙肝e抗体");
+    assertEqual(normalizeMetricName("HBcAb"), "乙肝核心抗体");
+  });
+
   it("isKnownMetric 区分命中/未命中", () => {
     assert(isKnownMetric("TSH"));
     assert(!isKnownMetric("某罕见指标"));

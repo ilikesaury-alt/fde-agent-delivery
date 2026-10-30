@@ -135,11 +135,11 @@ describe("extract — 整体校验", () => {
     assertEqual(r.metrics[0].status, "high");
   });
 
-  it("缺日期 → ExtractError(extractInvalid)", async () => {
-    await assertThrows(
-      () => validateExtracted({ metrics: [{ raw_name: "a", value_text: "1" }] }),
-      (e) => e instanceof ExtractError && e.code === "extractInvalid",
-    );
+  it("缺日期不再判失败（日期只是建议值，确认闸补填）", () => {
+    const r = validateExtracted({ metrics: [{ raw_name: "a", value_text: "1" }] });
+    assertEqual(r.checkDate, null);
+    assertEqual(r.metrics.length, 1);
+    // 但**确认入库**时日期仍是必填（POST /api/reports 校验，见 routes.test）
   });
 
   it("无指标 / 指标全被丢弃 → ExtractError(extractFailed)", async () => {
@@ -195,6 +195,40 @@ describe("extract — 主流程与重试", () => {
       (e) => e instanceof ExtractError && e.code === "extractInvalid",
     );
     assertEqual(calls, 2, "1 次首调 + 1 次重试");
+  });
+
+  it("上游「200 但空内容」→ 自动重试一次（真实报告实测：空响应不是死刑）", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      // 第一次：200 + 空 content（退化响应）；第二次：正常
+      const body =
+        calls === 1
+          ? { choices: [{ message: { content: "" } }] }
+          : { choices: [{ message: { content: GOOD_JSON } }] };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const r = await extractReport(ENV, "报告正文", { fetchImpl, retry: 0 });
+    assertEqual(calls, 2, "空内容应额外重试一次（即使 retry=0）");
+    assertEqual(r.metrics.length, 2);
+  });
+
+  it("上游 5xx 不重试（避免放大限流）", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return new Response("upstream boom", { status: 502 });
+    }) as unknown as typeof fetch;
+
+    await assertThrows(
+      () => extractReport(ENV, "报告正文", { fetchImpl, retry: 1 }),
+      (e) => e instanceof ExtractError && e.code === "extractFailed",
+    );
+    assertEqual(calls, 1, "错误码类失败不重试");
   });
 
   it("空文本 → extractFailed 前的 emptyText（不调模型）", async () => {

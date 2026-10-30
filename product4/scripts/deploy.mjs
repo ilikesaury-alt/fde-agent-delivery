@@ -152,7 +152,7 @@ const pageOk = await probe("/", async (res) => {
 if (!healthOk || !pageOk) {
   console.error(
     "\n✖ 部署已推送但线上探针未通过。排查顺序：\n" +
-      "  1) npx wrangler versions view <最新版本ID> → 必须同时含 env.ASSETS / env.DB / env.AI 三个绑定\n" +
+      "  1) npx wrangler versions view <最新版本ID> → 必须同时含 env.ASSETS / env.DB 两个绑定\n" +
       "  2) 首页 500 = 静态资产未上传（1101：部署时跳过了 monotonic asset upload）\n" +
       "  3) /api/health 失败 = secrets 丢失或运行时异常 → npx wrangler tail 看实时日志\n" +
       "  4) 首次部署前必须先建资源：wrangler d1 create health-track-db",

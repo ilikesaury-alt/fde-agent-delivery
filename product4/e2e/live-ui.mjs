@@ -116,7 +116,9 @@ check("预览表至少 1 行", rows >= 1, `check-row-0 存在=${rows}`);
 
 const previewText = await textOf("preview-panel");
 check("预览显示「未确认前不会写入数据库」", previewText.includes("未确认前不会写入数据库"));
-check("预览含身份信息（检测日期）", previewText.includes("2025-03-14"), previewText.slice(0, 80));
+// 检测日期现在是**可编辑字段**（日期错了人能改），所以值在 input 里，不在文本里
+const previewDate = await page.evaluate(() => document.querySelector('[data-testid="preview-date"]')?.value ?? "");
+check("预览含身份信息（检测日期，可编辑）", previewDate === "2025-03-14", `date=${previewDate}`);
 
 /* 3. 放弃一次：确认「未确认不入库」 */
 const countReports = () => page.evaluate(async (a) => {

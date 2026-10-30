@@ -126,8 +126,22 @@ export function parseRefRange(refText: string | null | undefined): RefRange | nu
 export function determineStatus(
   valueNum: number | null,
   range: RefRange | null,
+  bound?: ValueBound | null,
 ): MetricStatus {
-  if (valueNum == null || !Number.isFinite(valueNum)) return "unknown";
+  if (valueNum == null || !Number.isFinite(valueNum)) {
+    // 界值（`<2.000` / `>5.00`）不是数值，但**有些情况可以确定结论**：
+    //   value < n 且 n <= 下限  → 必然低于下限 → low
+    //   value > n 且 n >= 上限  → 必然高于上限 → high
+    // 其余仍是 unknown（值落在区间内两侧都可能，猜就是错）。
+    // 真实报告（乙肝五项 `>5.00` 参考 0-0.15，原报告已标 ↑）就吃到这条：不判就漏。
+    if (bound && range) {
+      const { low, high } = range;
+      if (low != null && high != null && low > high) return "unknown";
+      if (bound.op === "<" && low != null && bound.n <= low) return "low";
+      if (bound.op === ">" && high != null && bound.n >= high) return "high";
+    }
+    return "unknown";
+  }
   if (!range) return "unknown";
   const { low, high } = range;
   if (low == null && high == null) return "unknown";
@@ -155,6 +169,19 @@ export function cleanValueText(valueText: string): string {
  * 原文值 → 数值。只接受**纯数值**（可带正负号与小数）；
  * `<0.01`、`阴性`、`±` 之类返回 null —— 它们不是可绘制的点（诚实标注，不插值）。
  */
+/** 界值：`<2.000` 表示「小于 2」，`>5.00` 表示「大于 5」（不做插值） */
+export type ValueBound = { op: "<" | ">"; n: number };
+
+/** 原文值 → 界值（只有 `<`/`>` 才算；`≤`/`≥` 仍按非严格处理成 `<=x` 时也当界值） */
+export function parseValueBound(valueText: string): ValueBound | null {
+  const s = foldSymbols(cleanValueText(valueText)).replace(/,/g, "").trim();
+  const m = /^(<=|<|>=|>)\s*(-?\d+(?:\.\d+)?)$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[2]);
+  if (!Number.isFinite(n)) return null;
+  return { op: m[1].startsWith("<") ? "<" : ">", n };
+}
+
 export function parseValueNum(valueText: string): number | null {
   const s = foldSymbols(cleanValueText(valueText)).replace(/,/g, "").trim();
   if (s === "") return null;

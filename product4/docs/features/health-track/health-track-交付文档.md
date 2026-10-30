@@ -69,11 +69,10 @@
 | `MAGPIE_API_KEY` | ✅ | 上游密钥 |
 | `MAGPIE_MODEL` | — | 默认 `deepseek-chat` |
 | `ACCESS_TOKEN` | ⬜ 但线上必须设 | 设置后所有 `/api/*` 需 `Authorization: Bearer <token>` |
-| `OCR_MODEL` | — | 覆盖视觉模型（默认 `@cf/meta/llama-3.2-11b-vision-instruct`） |
 | `MAX_REPORT_CHARS` | — | 单份报告文本上限（默认 60000，超限直接拒绝而不是截断） |
 | `EXTRACT_RETRY` | — | 抽取校验失败的重试次数（默认 1） |
 
-绑定：`DB`（D1 `health-track-db`）、`AI`（Workers AI，仅扫描件 OCR 用）、`ASSETS`。
+绑定：`DB`（D1 `health-track-db`）、`ASSETS`。**没有 Workers AI**：扫描件识别在浏览器本地跑 PaddleOCR（ONNX Runtime WASM），图片不出设备。
 **无 Vectorize** —— 解读的数据全在 D1 行里，不做语义检索。
 
 ## 4. 测试指引
@@ -82,7 +81,7 @@
 ```bash
 cd product4
 npm run typecheck      # 0 error
-npm test               # 118 项单测
+npm test               # 128 项单测
 npm run build          # 构建 + 产物校验
 npm run verify:local   # 本地整链 21 项（内存 Repo + 假网关，沙箱可跑）
 npm run eval           # 真网关抽取评测：行级准确率 + 红线（需 .secrets.json）
@@ -149,7 +148,7 @@ node scripts/deploy.mjs --skip-migrate   # 无表结构变更时
 
 ### 部署后必查（三个绑定，缺一不可）
 ```bash
-npx wrangler versions view <version-id>   # 需同时含 env.ASSETS / env.DB / env.AI
+npx wrangler versions view <version-id>   # 需同时含 env.ASSETS / env.DB
 curl https://health-track.ilikesaury.workers.dev/api/health
 curl https://health-track.ilikesaury.workers.dev/api/reports -H "authorization: Bearer <token>"
 ```

@@ -64,6 +64,12 @@ export const STANDARD_METRICS: StandardMetric[] = [
   { standard: "天门冬氨酸氨基转移酶", aliases: ["谷草转氨酶", "ast", "got"] },
   { standard: "总胆红素", aliases: ["tbil", "total bilirubin"] },
   { standard: "白蛋白", aliases: ["alb", "albumin"], veto: NOT_SERUM },
+  // 乙肝五项（真实报告里最常见的定量组套；HBsAg(H) 是「高值」稀释复测，与分析物同一）
+  { standard: "乙肝表面抗原", aliases: ["hbsag", "hbsag(h)", "乙肝表面抗原", "乙肝表面抗原定量"] },
+  { standard: "乙肝表面抗体", aliases: ["hbsab", "抗-hbs", "乙肝表面抗体", "乙肝表面抗体定量"] },
+  { standard: "乙肝e抗原", aliases: ["hbeag", "hbeag(h)", "乙肝e抗原", "乙肝e抗原定量"] },
+  { standard: "乙肝e抗体", aliases: ["hbeab", "抗-hbe", "乙肝e抗体", "乙肝e抗体定量"] },
+  { standard: "乙肝核心抗体", aliases: ["hbcab", "抗-hbc", "乙肝核心抗体", "乙肝核心抗体定量"] },
   { standard: "γ-谷氨酰转移酶", aliases: ["谷氨酰转肽酶", "ggt", "γ-gt", "ggtp"] },
 
   // ── 肾功 ──────────────────────────────────────────────────

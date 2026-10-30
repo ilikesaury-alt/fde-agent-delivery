@@ -15,6 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { extractPdfText, PdfExtractError, renderPdfPages, PDF_MAX_OCR_PAGES } from "../lib/pdf.ts";
+import { dataUrlToBlob, recognizePage } from "../lib/ocr-client.ts";
+import { findReportDate, reconstructTable, rowsToText } from "../lib/table-reconstruct.ts";
 
 const TOKEN_KEY = "health_token";
 
@@ -89,6 +91,15 @@ type InterpretResult = {
   mode: "explain" | "trend";
   disclaimer: string;
 };
+
+/* ────────────────────────── 工具 ────────────────────────── */
+
+/** 本地时区的 YYYY-MM-DD（不用 toISOString：那是 UTC，早上会差一天） */
+function todayIso(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 /* ────────────────────────── 常量 ────────────────────────── */
 
@@ -380,21 +391,35 @@ export default function Home() {
     try {
       const pages = await renderPdfPages(file, { maxPages: PDF_MAX_OCR_PAGES });
       const parts: string[] = [];
+      let unreliable = 0;
+      let slowest = 0;
+      let detectedDate: string | null = null;
       for (const p of pages) {
         setOcrBusy({ page: p.page, total: pages.length });
         try {
-          const res = await api<{ text: string }>("/api/ocr", token, {
-            method: "POST",
-            body: JSON.stringify({ image: p.dataUrl, page: p.page }),
-          });
-          parts.push(res.text);
+          // 识别在**浏览器本地**跑（图片不上传）：PaddleOCR + ONNX Runtime WASM
+          const outcome = await recognizePage(dataUrlToBlob(p.dataUrl));
+          slowest = Math.max(slowest, outcome.ms);
+          const table = reconstructTable(outcome.lines, { imageWidth: outcome.width });
+          if (!table.reliable) unreliable++;
+          // 日期单独从**全部行**（含页脚）里确定性提取，再作为一行干净文本补回去
+          detectedDate = detectedDate ?? findReportDate(outcome.lines);
+          parts.push(rowsToText(table));
         } catch (e) {
           // 单页失败只跳过该页（不整批失败）——失败页留可见标记，人可手工补
           parts.push(`【第 ${p.page} 页识别失败：${e instanceof Error ? e.message : "未知错误"}】`);
         }
       }
-      setRawText(parts.join("\n\n"));
-      setNotice(`扫描件识别完成（${pages.length} 页）。识别文本未经校对，请逐行核对后再解析指标。`);
+      const body = parts.join("\n\n");
+      // 日期放在最前面：抽取规则会从文本里找「检测日期」，趋势也靠它排序
+      setRawText(detectedDate ? `检测日期：${detectedDate}\n\n${body}` : body);
+      const secs = (slowest / 1000).toFixed(0);
+      setNotice(
+        `扫描件识别完成（${pages.length} 页，最慢一页 ${secs}s，本地推理不上传）。` +
+          (unreliable > 0
+            ? `其中 ${unreliable} 页没认出表头，列是按位置排的 —— **请重点核对结果列**，再点「解析指标」。`
+            : "识别文本未经校对，请逐行核对后再点「解析指标」。"),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "扫描件渲染失败。");
     } finally {
@@ -420,10 +445,17 @@ export default function Home() {
         body: JSON.stringify({ text: rawText, sourceType, fileName }),
         signal: abortRef.current.signal,
       });
-      setPreview({ ...data, rawText, sourceType, fileName });
+      // 报告日期缺失（扫描件丢掉页脚时间块时很常见）**不要整份失败**：
+      // 默认取今天并明确提示人核对 —— 日期是必须项，但填它的是人，不是模型
+      const dateMissing = !data.checkDate;
+      setPreview({ ...data, checkDate: data.checkDate || todayIso(), rawText, sourceType, fileName });
       // 默认全选（人只需要取消「模型抄错的行」，而不是逐条勾）
       setChecked(new Set(data.metrics.map((_, i) => i)));
-      setNotice(`解析出 ${data.metrics.length} 项指标，请核对原文片段后确认入库。`);
+      setNotice(
+        dateMissing
+          ? `解析出 ${data.metrics.length} 项指标；报告未识别到检测日期，已默认今天 —— 请核对日期后确认入库。`
+          : `解析出 ${data.metrics.length} 项指标，请核对原文片段后确认入库。`,
+      );
     } catch (e) {
       // 用户主动取消不是错误：不弹红色报错，给中性提示并让按钮回正
       // （ui-smoke-test 第 ④ 项「取消后状态是否回正」—— 初版这里会把 AbortError
@@ -684,8 +716,17 @@ export default function Home() {
               <div className="mt-4 border-t border-[var(--color-line)] pt-3" data-testid="preview-panel">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
                   <span className="font-medium">确认入库</span>
-                  <span className="text-[var(--color-ink-3)]">
-                    检测日期 {preview.checkDate} · 已勾选 {checkedRows.length}/{preview.metrics.length} · 异常 {abnormalCount} 项
+                  <label className="flex items-center gap-1 text-[var(--color-ink-2)]">
+                    检测日期
+                    <input
+                      type="date"
+                      value={preview.checkDate}
+                      onChange={(e) => setPreview({ ...preview, checkDate: e.target.value })}
+                      className="rounded border border-[var(--color-line-strong)] bg-[var(--color-inset)] px-1 py-0.5"
+                      data-testid="preview-date"
+                    />
+                  </label>
+                  <span className="text-[var(--color-ink-3)]"> · 已勾选 {checkedRows.length}/{preview.metrics.length} · 异常 {abnormalCount} 项
                   </span>
                 </div>
                 <div className="max-h-[320px] overflow-auto rounded-md border border-[var(--color-line)]">

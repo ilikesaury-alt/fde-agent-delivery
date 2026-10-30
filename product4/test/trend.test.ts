@@ -1,7 +1,14 @@
 /** 趋势与异常判定（A4/A5 的核心逻辑，全部纯函数） */
 
 import { assert, assertEqual, describe, it } from "./harness.ts";
-import { buildTrend, cleanValueText, determineStatus, parseRefRange, parseValueNum } from "../lib/trend.ts";
+import {
+  buildTrend,
+  cleanValueText,
+  determineStatus,
+  parseRefRange,
+  parseValueBound,
+  parseValueNum,
+} from "../lib/trend.ts";
 import type { Metric, MetricStatus } from "../lib/types.ts";
 
 function mkMetric(over: Partial<Metric> = {}): Metric {
@@ -49,6 +56,23 @@ describe("trend — 参考范围解析", () => {
     assertEqual(determineStatus(6.1, parseRefRange("≤6.1")), "normal");
     assertEqual(determineStatus(1.0, parseRefRange(">1.0")), "low");
     assertEqual(determineStatus(1.0, parseRefRange("≥1.0")), "normal");
+  });
+
+  it("界值（<x / >x）能确定的结论要判（不确定的仍 unknown）", () => {
+    // 真实报告：乙肝五项 `>5.00` 参考 0-0.15，原报告已标 ↑
+    assertEqual(determineStatus(null, parseRefRange("0-0.15"), parseValueBound(">5.00")), "high");
+    assertEqual(determineStatus(null, parseRefRange("0-0.35"), parseValueBound(">25.00")), "high");
+    // `<2` 参考 0-10：2 落在区间内 → 值可能在区间内也可能偏低 → 不猜
+    assertEqual(determineStatus(null, parseRefRange("0-10"), parseValueBound("<2.000")), "unknown");
+    assertEqual(determineStatus(null, parseRefRange("0-0.1"), parseValueBound("<0.05")), "unknown");
+    // `<0.01` 参考 3-5：必然低于下限 → low
+    assertEqual(determineStatus(null, parseRefRange("3-5"), parseValueBound("<0.01")), "low");
+    // 无参考范围 / 纯定性值 → unknown
+    assertEqual(determineStatus(null, null, parseValueBound(">5")), "unknown");
+    assertEqual(determineStatus(null, parseRefRange("0-10"), null), "unknown");
+    // 界值解析只认 <、>（含 <= >=）；定性词仍 null
+    assertEqual(parseValueBound("<0.01"), { op: "<", n: 0.01 });
+    assertEqual(parseValueBound("阴性"), null);
   });
 
   it("分区范围（男/女/孕）→ null：没有性别字段就不能替人猜（审查阻塞项）", () => {

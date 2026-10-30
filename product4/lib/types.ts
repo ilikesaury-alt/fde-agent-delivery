@@ -50,7 +50,8 @@ export type ExtractedMetric = Omit<Metric, "id" | "reportId" | "profileId" | "cr
 
 /** 抽取结果（LLM 输出经校验后的形状） */
 export type ExtractedReport = {
-  checkDate: string;
+  /** 报告日期建议值：**可为 null**（识别不到时由用户在确认闸补填 —— 不猜日期） */
+  checkDate: string | null;
   hospital: string | null;
   metrics: ExtractedMetric[];
 };

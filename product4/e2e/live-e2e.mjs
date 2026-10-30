@@ -263,8 +263,10 @@ const emptyMetrics = await call("/api/reports", {
 });
 check("无指标 → 400", emptyMetrics.status === 400, `status=${emptyMetrics.status}`);
 
-const ocrBad = await call("/api/ocr", { method: "POST", body: JSON.stringify({ image: "not-a-data-url" }) });
-check("OCR 非 dataURL → 400", ocrBad.status === 400, `status=${ocrBad.status}`);
+// 服务端 OCR 已下线（扫描件改在浏览器本地跑 PaddleOCR，图片不出设备）：
+// 旧路由必须返回 404，而不是「还在但没人用」——避免误以为服务端还能识别
+const ocrGone = await call("/api/ocr", { method: "POST", body: JSON.stringify({ image: "x" }) });
+check("服务端 OCR 路由已下线（404）", ocrGone.status === 404, `status=${ocrGone.status}`);
 
 /* ─────────────────── 清理（精确 id，不按标题猜）─────────────────── */
 
