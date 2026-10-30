@@ -79,6 +79,19 @@ describe("metrics-dict — 归一", () => {
     assertEqual(normalizeMetricName("HBcAb"), "乙肝核心抗体");
   });
 
+  it("血常规：绝对值 # 与百分比 % 不混，OCR 混淆名能归位", () => {
+    assertEqual(normalizeMetricName("NEU#"), "中性粒细胞绝对值");
+    assertEqual(normalizeMetricName("NEU%"), "中性粒细胞百分比");
+    assert(normalizeMetricName("NEU#") !== normalizeMetricName("NEU%"), "绝对值与百分比必须是两条线");
+    assertEqual(normalizeMetricName("MON0%"), "单核细胞百分比", "0↔O 混淆要能归位");
+    assertEqual(normalizeMetricName("BAS0%"), "嗜碱性粒细胞百分比");
+    assertEqual(normalizeMetricName("P-LcR"), "大血小板比率");
+    assertEqual(normalizeMetricName("EoS%"), "嗜酸性粒细胞百分比");
+    assertEqual(normalizeMetricName("RDW-SD"), "红细胞分布宽度标准差");
+    // 撞车项不合并：PCT 既可能是血小板压积也可能是降钙素原
+    assertEqual(normalizeMetricName("PCT"), "pct");
+  });
+
   it("isKnownMetric 区分命中/未命中", () => {
     assert(isKnownMetric("TSH"));
     assert(!isKnownMetric("某罕见指标"));

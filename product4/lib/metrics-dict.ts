@@ -41,8 +41,8 @@ export const STANDARD_METRICS: StandardMetric[] = [
   { standard: "红细胞计数", aliases: ["红细胞", "rbc", "红细胞数", "erythrocyte"], veto: NOT_BLOOD_PANEL },
   { standard: "血红蛋白", aliases: ["hb", "hgb", "hemoglobin", "血红蛋白浓度"] },
   { standard: "血小板计数", aliases: ["血小板", "plt", "platelet", "血小板数"] },
-  { standard: "中性粒细胞百分比", aliases: ["中性粒细胞比率", "neut%", "ne%", "neutrophil%"] },
-  { standard: "淋巴细胞百分比", aliases: ["淋巴细胞比率", "lymph%", "ly%", "lymphocyte%"] },
+  { standard: "中性粒细胞百分比", aliases: ["中性粒细胞比率", "neut%", "ne%", "neutrophil%", "neu%", "neut%"] },
+  { standard: "淋巴细胞百分比", aliases: ["淋巴细胞比率", "lymph%", "ly%", "lymphocyte%", "lym%", "lymph%"] },
 
   // ── 血脂 ──────────────────────────────────────────────────
   { standard: "总胆固醇", aliases: ["胆固醇", "tc", "total cholesterol", "chol"] },
@@ -64,6 +64,29 @@ export const STANDARD_METRICS: StandardMetric[] = [
   { standard: "天门冬氨酸氨基转移酶", aliases: ["谷草转氨酶", "ast", "got"] },
   { standard: "总胆红素", aliases: ["tbil", "total bilirubin"] },
   { standard: "白蛋白", aliases: ["alb", "albumin"], veto: NOT_SERUM },
+  // ── 血常规五分类（真实报告实测：24 项，含绝对值 # 与百分比 % 两套，**绝不能混**）──
+  // 绝对值与百分比是不同指标：NEU# 中性粒细胞数(10^9/L) ≠ NEU% 中性粒细胞率(%)
+  { standard: "中性粒细胞绝对值", aliases: ["neu#", "neut#", "中性粒细胞数", "中性粒细胞绝对值"] },
+  { standard: "淋巴细胞绝对值", aliases: ["lym#", "lymph#", "淋巴细胞数", "淋巴细胞绝对值"] },
+  { standard: "单核细胞绝对值", aliases: ["mono#", "mon#", "单核细胞数", "单核细胞绝对值"] },
+  { standard: "嗜酸性粒细胞绝对值", aliases: ["eos#", "嗜酸性细胞数", "嗜酸性粒细胞绝对值"] },
+  { standard: "嗜碱性粒细胞绝对值", aliases: ["baso#", "bas#", "嗜碱性细胞数", "嗜碱性粒细胞绝对值"] },
+  { standard: "单核细胞百分比", aliases: ["mono%", "mon%", "单核细胞率", "单核细胞百分比"] },
+  { standard: "嗜酸性粒细胞百分比", aliases: ["eos%", "嗜酸性细胞率", "嗜酸性粒细胞百分比"] },
+  { standard: "嗜碱性粒细胞百分比", aliases: ["baso%", "bas%", "嗜碱性细胞率", "嗜碱性粒细胞百分比"] },
+  { standard: "红细胞压积", aliases: ["hct", "红细胞比容", "红细胞压积"] },
+  { standard: "平均红细胞体积", aliases: ["mcv", "红细胞平均体积", "平均红细胞体积"] },
+  { standard: "平均红细胞血红蛋白量", aliases: ["mch", "rbc平均hgb含量", "平均红细胞血红蛋白量"] },
+  { standard: "平均红细胞血红蛋白浓度", aliases: ["mchc", "rbc平均hgb浓度", "平均红细胞血红蛋白浓度"] },
+  { standard: "红细胞分布宽度标准差", aliases: ["rdw-sd", "rbc分布宽度-标准差", "红细胞分布宽度标准差"] },
+  { standard: "红细胞分布宽度变异系数", aliases: ["rdw-cv", "rbc分布宽度-变异系数", "红细胞分布宽度变异系数"] },
+  { standard: "平均血小板体积", aliases: ["mpv", "血小板平均体积", "平均血小板体积"] },
+  { standard: "血小板分布宽度", aliases: ["pdw", "血小板体积分布宽度", "血小板分布宽度"] },
+  { standard: "大血小板比率", aliases: ["p-lcr", "大血小板比率"] },
+  // ⚠️ 刻意**不收** `PCT`：它既可能是「血小板压积」（%）也可能是「降钙素原」（ng/mL），
+  //   与「尿素 vs 尿素氮」同类撞车 —— 名字分不出来就宁可不合并，让它自成一条线。
+  { standard: "血小板压积", aliases: ["血小板压积"] },
+
   // 乙肝五项（真实报告里最常见的定量组套；HBsAg(H) 是「高值」稀释复测，与分析物同一）
   { standard: "乙肝表面抗原", aliases: ["hbsag", "hbsag(h)", "乙肝表面抗原", "乙肝表面抗原定量"] },
   { standard: "乙肝表面抗体", aliases: ["hbsab", "抗-hbs", "乙肝表面抗体", "乙肝表面抗体定量"] },
@@ -140,7 +163,27 @@ export function normalizeMetricName(rawName: string): string {
     if (h && t && h === t) return h;
   }
 
-  return lookup(cleaned, rawName) ?? cleaned;
+  const direct = lookup(cleaned, rawName);
+  if (direct) return direct;
+
+  // 拉丁缩写里的 OCR 混淆（真实报告实测）：`MON0%` `BAS0%` `P-LcR` `EoS%`。
+  // 归一后**必须能命中字典**才采用（否则仍返回原文名）—— 只修「已知指标认不出」，
+  // 不凭猜测把两个陌生指标并到一起。
+  const variant = ocrLatinVariant(cleaned);
+  if (variant && variant !== cleaned) {
+    const hit = lookup(variant, rawName);
+    if (hit) return hit;
+  }
+  return cleaned;
+}
+
+/** 拉丁缩写里的常见 OCR 混扰：数字 0/1/5 与字母 O/l/S、大小写不一致 */
+export function ocrLatinVariant(name: string): string {
+  if (!/[a-zA-Z]/.test(name)) return name;
+  return name
+    .replace(/0/g, "o")
+    .replace(/1/g, "l")
+    .replace(/5/g, "s");
 }
 
 /** 别名查询（含上下文否决）；未命中返回 null */

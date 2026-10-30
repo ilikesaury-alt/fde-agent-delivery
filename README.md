@@ -12,7 +12,7 @@
 | ③ | **知识库问答**（kb-ask） | https://kb-ask.ilikesaury.workers.dev | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
 | ④ | **体检指标追踪**（health-track） | https://health-track.ilikesaury.workers.dev | 体检报告 → 结构化指标 → 趋势与异常 → 有依据、不越界的解读 |
 
-**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`。
+**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 

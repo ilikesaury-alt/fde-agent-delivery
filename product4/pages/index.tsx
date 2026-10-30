@@ -449,12 +449,23 @@ export default function Home() {
       // 默认取今天并明确提示人核对 —— 日期是必须项，但填它的是人，不是模型
       const dateMissing = !data.checkDate;
       setPreview({ ...data, checkDate: data.checkDate || todayIso(), rawText, sourceType, fileName });
-      // 默认全选（人只需要取消「模型抄错的行」，而不是逐条勾）
-      setChecked(new Set(data.metrics.map((_, i) => i)));
+      /**
+       * 默认勾选策略（真实语料实测后收紧）：
+       *   - 常规检验报告 → 默认全选（人只需取消「模型抄错的行」，不必逐条勾）
+       *   - **一条参考范围都没有** → 默认全不选。这类文本通常是超声/影像等散文式报告，
+       *     抽取会把正文里的尺寸、直径硬凑成「指标」（实测一份腹部超声抽出 27 条），
+       *     全选状态下一键入库就是往趋势里灌垃圾。默认不选 = 必须人主动勾。
+       */
+      const withRef = data.metrics.filter((m) => (m.refText ?? "").trim() !== "").length;
+      const looksLikeProse = data.metrics.length >= 3 && withRef === 0;
+      setChecked(looksLikeProse ? new Set<number>() : new Set(data.metrics.map((_, i) => i)));
       setNotice(
-        dateMissing
-          ? `解析出 ${data.metrics.length} 项指标；报告未识别到检测日期，已默认今天 —— 请核对日期后确认入库。`
-          : `解析出 ${data.metrics.length} 项指标，请核对原文片段后确认入库。`,
+        looksLikeProse
+          ? `解析出 ${data.metrics.length} 项，但**没有任何参考范围** —— 这可能是超声/影像等非检验项目表，` +
+            `已默认一条都不勾选。请确认这些行确实是检验指标后再逐条勾选。`
+          : dateMissing
+            ? `解析出 ${data.metrics.length} 项指标；报告未识别到检测日期，已默认今天 —— 请核对日期后确认入库。`
+            : `解析出 ${data.metrics.length} 项指标，请核对原文片段后确认入库。`,
       );
     } catch (e) {
       // 用户主动取消不是错误：不弹红色报错，给中性提示并让按钮回正

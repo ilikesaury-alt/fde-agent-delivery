@@ -263,6 +263,10 @@ export async function extractReport(
           budget = Math.max(budget, 1);
           continue;
         }
+        // 空内容**持续**出现时，问题不在「服务抖动」，而是这段文本里没有可转录的检验项目表
+        // （实测：一份腹部超声报告 2 次调用都返回空串，而它确实没有检验项目）。
+        // 报「AI 服务返回空内容，请稍后重试」会让人白等 —— 换成明确的业务结论 + 改走手工录入。
+        if (err.reason === "empty") throw new ExtractError("noMetrics");
         throw new ExtractError("extractFailed", err.message);
       }
       throw err;

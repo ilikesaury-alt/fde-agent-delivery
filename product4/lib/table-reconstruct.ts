@@ -248,12 +248,27 @@ export function rowsToText(result: ReconstructResult, opts: { header?: boolean }
  * 只改**能确定**的替换，不碰大小写语义（`IU` 与 `iu` 是不同写法，但都合法）。
  */
 export function normalizeUnitText(unit: string): string {
-  return unit
+  const cleaned = unit
     .replace(/\s+/g, "")
+    .replace(/[${}]/g, "") // OCR 把上标/角标识别成 $ { } 之类的噪声
     .replace(/l(?=U)/g, "I") // lU → IU
     .replace(/m1(?![a-zA-Z])/g, "ml")
     .replace(/mI(?![a-zA-Z])/g, "ml")
     .replace(/1U/g, "IU");
+
+  // `10^9/L` / `10^12/L` 是血常规最常见的单位，扫描件里上标几乎必丢：
+  //   `109/L`、`1012/L`、`10^/L`、`10 9/L` 都是同一个单位的不同坏法。
+  // 只修**能确定**的：能还原出 9 或 12 的才修；还原不出（如 `10^/L`）保持原样 —— 不猜。
+  const CBC = /^10\s*\^?\s*(9|12)\s*\/\s*L$/;
+  const bare = /^10(9|12)\/L$/.exec(cleaned);
+  if (bare) return `10^${bare[1]}/L`;
+  const withCaret = /^10\^?(9|12)\/L$/.exec(cleaned);
+  if (withCaret) return `10^${withCaret[1]}/L`;
+  if (CBC.test(cleaned)) return cleaned.replace(/^10\s*\^?\s*(9|12)/, "10^$1");
+  // `10/L`、`10^/L`：指数被整段识别丢了，**还原不出 9 还是 12** → 返回空（=单位未知）。
+  // 宁可显示「无单位」也不要写一个假单位：跨报告比较时假单位会触发错误的「单位变了」告警。
+  if (/^10\^?\/?L$/i.test(cleaned)) return "";
+  return cleaned;
 }
 
 /**
@@ -310,7 +325,9 @@ export function isMetricRow(cells: Record<string, string>): boolean {
   const name = (cells.name ?? "").trim();
   const value = (cells.value ?? "").trim();
   if (name === "" || value === "") return false;
-  if (/[：:]/.test(name)) return false;
+  // 名称或**值**里出现「键：值」形态 → 是页脚/签名行，不是检验结果
+  // （实测血常规报告末尾的「检验者 | 打印者： 李美娴 | 审核者：…」就是这么漏进来的）
+  if (/[：:]/.test(name) || /[：:]/.test(value)) return false;
   if (FOOTER_NAME_RE.test(name)) return false;
   return true;
 }

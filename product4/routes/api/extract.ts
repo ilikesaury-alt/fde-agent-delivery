@@ -59,7 +59,10 @@ export const POST = defineHandler(async (c) => {
     });
   } catch (e) {
     if (e instanceof ExtractError) {
-      const status = e.code === "emptyText" || e.code === "tooLong" ? 400 : 502;
+      const status =
+        e.code === "emptyText" || e.code === "tooLong" ? 400
+        : e.code === "noMetrics" ? 422
+        : 502;
       return jsonResponse(status, { error: e.message });
     }
     if (e instanceof MissingConfigError) {

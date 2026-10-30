@@ -217,6 +217,23 @@ describe("extract — 主流程与重试", () => {
     assertEqual(r.metrics.length, 2);
   });
 
+  it("空内容持续出现 → noMetrics（散文式报告没有检验项目表，重试无意义）", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await assertThrows(
+      () => extractReport(ENV, "超声所见：肝脏大小正常，肝内探及多个囊性无回声，较大约1.1cm。", { fetchImpl, retry: 0 }),
+      (e) => e instanceof ExtractError && e.code === "noMetrics",
+    );
+    assertEqual(calls, 2, "空内容仍重试一次，再判无指标");
+  });
+
   it("上游 5xx 不重试（避免放大限流）", async () => {
     let calls = 0;
     const fetchImpl = (async () => {

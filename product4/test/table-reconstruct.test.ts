@@ -138,6 +138,8 @@ describe("table-reconstruct — 真实报告几何", () => {
     assertEqual(isMetricRow({ name: "以下为空", value: "" }), false);
     assertEqual(isMetricRow({ name: "HBsAg", value: "78.44" }), true);
     assertEqual(isMetricRow({ name: "尿潜血", value: "阴性" }), true);
+    // 值里带「键：值」也判页脚（实测：检验者/打印者/审核者那一行会漏进来）
+    assertEqual(isMetricRow({ name: "李美娴", value: "打印者： 李美娴" }), false);
   });
 
   it("报告日期：从页脚行确定性提取，优先级 采集>报告>申请", () => {
@@ -163,6 +165,15 @@ describe("table-reconstruct — 真实报告几何", () => {
     assertEqual(normalizeUnitText("IU/mI"), "IU/ml");
     assertEqual(normalizeUnitText("lU/ml"), "IU/ml");
     assertEqual(normalizeUnitText("mmol/L"), "mmol/L", "合法单位不得被改");
+    // 血常规单位：上标在扫描件里几乎必丢
+    assertEqual(normalizeUnitText("109/L"), "10^9/L");
+    assertEqual(normalizeUnitText("1012/L"), "10^12/L");
+    // `$10{/L$` 里连指数数字都没有 → 还原不出 → 单位未知（不写假单位）
+    assertEqual(normalizeUnitText("$10{/L$"), "");
+    assertEqual(normalizeUnitText("10^9/L"), "10^9/L", "本来就对的不要改");
+    // 指数整段丢了 → 单位未知（空），不写假单位（否则跨报告比较会误报「单位变了」）
+    assertEqual(normalizeUnitText("10^/L"), "");
+    assertEqual(normalizeUnitText("10/L"), "");
   });
 
   it("rowsToText：输出表头 + 只保留「有名称且有结果」的行", () => {
