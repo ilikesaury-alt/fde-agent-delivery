@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { extractPdfText, PdfExtractError, renderPdfPages, PDF_MAX_OCR_PAGES } from "../lib/pdf.ts";
-import { dataUrlToBlob, recognizePage } from "../lib/ocr-client.ts";
+import { cancelOcr, dataUrlToBlob, isOcrCancelled, recognizePage } from "../lib/ocr-client.ts";
 import { findReportDate, reconstructTable, rowsToText } from "../lib/table-reconstruct.ts";
 
 const TOKEN_KEY = "health_token";
@@ -264,7 +264,17 @@ export default function Home() {
   const [sourceType, setSourceType] = useState<"pdf" | "ocr" | "manual">("pdf");
   const [fileName, setFileName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
-  const [ocrBusy, setOcrBusy] = useState<{ page: number; total: number } | null>(null);
+  /**
+   * 长任务的进度状态。为什么要**分段 + 已用时长**：
+   * 单页扫描件实测 45s 左右（rec 阶段按文本框数线性耗时），只显示「正在识别第 1/1 页…」
+   * 和卡死没区别 —— 人看不出它在走、也不知道还要多久、更不能停。
+   * 所以这里带三样东西：阶段（渲染/识别/抽取）、已用秒数、本页已用秒数。
+   */
+  const [ocrBusy, setOcrBusy] = useState<
+    { phase: "render" | "recognize"; page: number; total: number; startedAt: number; pageStartedAt: number } | null
+  >(null);
+  /** 用于让「已用 Xs」真的跳动（否则界面只在状态变化时重渲染，秒数会冻住） */
+  const [, setTick] = useState(0);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -299,6 +309,15 @@ export default function Home() {
   const manualDateRef = useRef<HTMLInputElement | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  /** 抽取开始时间（用于显示「已用 Xs」） */
+  const [extractStartedAt, setExtractStartedAt] = useState<number | null>(null);
+
+  // 有长任务在跑时每秒重渲染一次，让「已用 Xs」活起来；没有长任务就不开定时器
+  useEffect(() => {
+    if (!ocrBusy && !extracting) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [ocrBusy, extracting]);
 
   useEffect(() => {
     const saved = typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
@@ -388,14 +407,23 @@ export default function Home() {
     setPreview(null);
     setFileName(file.name);
     setSourceType("ocr");
+    /**
+     * 长任务必须让人看得见在走、还要多久、并且能停。
+     * 单页扫描件实测 43–52s（rec 阶段按文本框数线性耗时：171 框 ≈ 50s），
+     * 原实现只显示「正在识别第 1 / 1 页…」，和卡死没有区别。
+     */
+    const startedAt = Date.now();
     try {
+      // 阶段一：渲染页图（一页 A4@scale2 位图约 30MB；通常 1–3s，但不给提示就像卡住）
+      setOcrBusy({ phase: "render", page: 0, total: 0, startedAt, pageStartedAt: startedAt });
       const pages = await renderPdfPages(file, { maxPages: PDF_MAX_OCR_PAGES });
       const parts: string[] = [];
       let unreliable = 0;
       let slowest = 0;
       let detectedDate: string | null = null;
       for (const p of pages) {
-        setOcrBusy({ page: p.page, total: pages.length });
+        // 阶段二：逐页识别
+        setOcrBusy({ phase: "recognize", page: p.page, total: pages.length, startedAt, pageStartedAt: Date.now() });
         try {
           // 识别在**浏览器本地**跑（图片不上传）：PaddleOCR + ONNX Runtime WASM
           const outcome = await recognizePage(dataUrlToBlob(p.dataUrl));
@@ -406,22 +434,34 @@ export default function Home() {
           detectedDate = detectedDate ?? findReportDate(outcome.lines);
           parts.push(rowsToText(table));
         } catch (e) {
+          // 用户取消**不是**故障：不要写成「第 N 页识别失败」，也不要丢掉已识别好的页
+          if (isOcrCancelled(e)) break;
           // 单页失败只跳过该页（不整批失败）——失败页留可见标记，人可手工补
           parts.push(`【第 ${p.page} 页识别失败：${e instanceof Error ? e.message : "未知错误"}】`);
         }
+      }
+      if (parts.length === 0) {
+        // 一页都没识别出来（首屏就取消）：中性提示，不上红色错误
+        setNotice("已取消扫描件识别。");
+        return;
       }
       const body = parts.join("\n\n");
       // 日期放在最前面：抽取规则会从文本里找「检测日期」，趋势也靠它排序
       setRawText(detectedDate ? `检测日期：${detectedDate}\n\n${body}` : body);
       const secs = (slowest / 1000).toFixed(0);
+      const totalSecs = ((Date.now() - startedAt) / 1000).toFixed(0);
+      const partial = parts.length < pages.length;
       setNotice(
-        `扫描件识别完成（${pages.length} 页，最慢一页 ${secs}s，本地推理不上传）。` +
+        (partial
+          ? `已取消：只识别了 ${parts.length} / ${pages.length} 页（共 ${totalSecs}s，本地推理不上传）。`
+          : `扫描件识别完成（${pages.length} 页，最慢一页 ${secs}s，共 ${totalSecs}s，本地推理不上传）。`) +
           (unreliable > 0
             ? `其中 ${unreliable} 页没认出表头，列是按位置排的 —— **请重点核对结果列**，再点「解析指标」。`
             : "识别文本未经校对，请逐行核对后再点「解析指标」。"),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "扫描件渲染失败。");
+      if (isOcrCancelled(e)) setNotice("已取消扫描件识别。");
+      else setError(e instanceof Error ? e.message : "扫描件渲染失败。");
     } finally {
       setOcrBusy(null);
     }
@@ -437,6 +477,7 @@ export default function Home() {
     setError("");
     setNotice("");
     setExtracting(true);
+    setExtractStartedAt(Date.now());
     setPreview(null);
     abortRef.current = new AbortController();
     try {
@@ -478,6 +519,7 @@ export default function Home() {
       }
     } finally {
       setExtracting(false);
+      setExtractStartedAt(null);
       abortRef.current = null;
     }
   };
@@ -683,8 +725,27 @@ export default function Home() {
                 />
               </div>
               {ocrBusy && (
-                <div className="text-[11px] text-[var(--color-ink-2)]" data-testid="ocr-progress">
-                  正在识别第 {ocrBusy.page} / {ocrBusy.total} 页…
+                <div className="flex items-center gap-2 text-[11px] text-[var(--color-ink-2)]" data-testid="ocr-progress">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-brand)]" />
+                  <span>
+                    {ocrBusy.phase === "render"
+                      ? "正在渲染页图…"
+                      : ocrBusy.total > 1
+                        ? `正在识别第 ${ocrBusy.page} / ${ocrBusy.total} 页…`
+                        : "正在识别扫描件…"}
+                    {"（已用 "}
+                    {Math.max(0, Math.round((Date.now() - ocrBusy.startedAt) / 1000))}
+                    {ocrBusy.phase === "recognize" && ocrBusy.total > 1
+                      ? `s，本页 ${Math.max(0, Math.round((Date.now() - ocrBusy.pageStartedAt) / 1000))}s）`
+                      : "s）"}
+                  </span>
+                  <button
+                    onClick={() => cancelOcr()}
+                    className="rounded border border-[var(--color-line-strong)] px-1.5 py-0.5"
+                    data-testid="ocr-cancel"
+                  >
+                    取消
+                  </button>
                 </div>
               )}
             </div>
@@ -704,20 +765,26 @@ export default function Home() {
             <div className="mt-2 flex items-center gap-2">
               <button
                 onClick={() => void doExtract()}
-                disabled={extracting || !rawText.trim()}
+                disabled={extracting || !!ocrBusy || !rawText.trim()}
                 className="rounded-md bg-[var(--color-brand)] px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
                 data-testid="extract-btn"
               >
                 {extracting ? "解析中…" : "解析指标"}
               </button>
               {extracting && (
-                <button
-                  onClick={() => abortRef.current?.abort()}
-                  className="rounded-md border border-[var(--color-line-strong)] px-2 py-1.5 text-[12px]"
-                  data-testid="extract-cancel"
-                >
-                  取消
-                </button>
+                <>
+                  <button
+                    onClick={() => abortRef.current?.abort()}
+                    className="rounded-md border border-[var(--color-line-strong)] px-2 py-1.5 text-[12px]"
+                    data-testid="extract-cancel"
+                  >
+                    取消
+                  </button>
+                  <span className="text-[11px] text-[var(--color-ink-3)]" data-testid="extract-elapsed">
+                    已用 {extractStartedAt ? Math.max(0, Math.round((Date.now() - extractStartedAt) / 1000)) : 0}s
+                    （模型在对整段文本做结构化，通常 10–30s）
+                  </span>
+                </>
               )}
               <span className="text-[11px] text-[var(--color-ink-3)]">{rawText.length} 字符</span>
             </div>

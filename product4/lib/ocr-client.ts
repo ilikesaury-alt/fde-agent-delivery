@@ -101,6 +101,39 @@ export function engineMeta(): OcrEngineMeta | null {
   return lastMeta;
 }
 
+/** 用户主动取消识别（与真实失败区分：取消不该上红色错误） */
+export class OcrCancelledError extends Error {
+  constructor() {
+    super("已取消识别");
+    this.name = "OcrCancelledError";
+  }
+}
+
+export function isOcrCancelled(e: unknown): boolean {
+  return e instanceof OcrCancelledError || (e instanceof Error && e.name === "OcrCancelledError");
+}
+
+/**
+ * 取消正在进行的识别。
+ *
+ * 为什么只能**终止 Worker**：WASM 推理是一段同步循环，Worker 里没有消息处理的机会，
+ * 发「cancel」消息要等这次推理跑完才轮得到 —— 那就不叫取消了（实测单页 45s）。
+ * 代价是引擎一起没了，下次识别要重新初始化（模型已缓存，实测约 3.5s）。
+ * 这个代价只在「用户主动放弃」时付一次，比让人干等 45s 划算。
+ */
+export function cancelOcr(): void {
+  for (const [, slot] of pending) slot.reject(new OcrCancelledError());
+  pending.clear();
+  try {
+    worker?.terminate();
+  } catch {
+    // terminate 失败无所谓：下面的引用重置才是关键（否则下次会复用死掉的 Worker）
+  }
+  worker = null;
+  initPromise = null;
+  lastMeta = null;
+}
+
 /** SDK 的 items → 我们的 TableLine（纯转换，单测覆盖） */
 export function toTableLines(items: PaddleItem[]): TableLine[] {
   const out: TableLine[] = [];

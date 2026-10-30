@@ -96,6 +96,8 @@ product4/
 | 血常规单位 | `10^9/L` → `109/L` / `$10{/L$` / `10/L` | 修 9/12 两档；还原不出指数 → 单位置空（不写假单位，否则误报「单位变了」） |
 | 散文式报告 | 腹部超声抽出 25 条假「指标」 | 无参考范围且 ≥3 行 → 默认零勾选 + 提示；空内容持续 → `noMetrics`/422「请改用手工录入」 |
 | 血常规归一 | `MON0%`/`BAS0%`/`P-LcR` 认不出；NEU# 与 NEU% 险些混 | 补 24 项面板（`#` 与 `%` 分线）+ OCR 拉丁混淆二次归一（必须命中字典才采用） |
+| 长任务像卡死 | 单页 OCR 45s 只显示「第 1/1 页」；不能停 | 分段进度（阶段+秒数，每秒跳动）+ `cancelOcr`（terminate Worker，代价是下次 init 3.5s）+ 取消保留已识别页 + 上中性提示 |
+| e2e 点击被浮层拦截 | `page.click` 3s 超时（`<section> intercepts pointer events`） | 语料走查已踩过；`live-scan` 也换成元素 `.click()` |
 | 正则双捕获组 | `^<NUM\|^<NUM` 走第二分支时 m[1] 是 undefined | 用 `(?:<=|<)\s*NUM` 单捕获组 |
 | 测试 helper 用 `??` | `valueNum: over.valueNum ?? 1.2` 让 `null` 变成 1.2 → 定性值用例永远测不出 | 用 `=== undefined ? x : y` |
 
@@ -141,6 +143,7 @@ product4/
 | 服务端 | **不再有** `/api/ocr`、`lib/ocr.ts`、`AI` 绑定；旧路由返回 404（有 e2e 断言） |
 | 性能 | 单页 12–20s（4 线程 WASM）；首次需下载模型 20.5MB（走百度 CDN，浏览器缓存） |
 | 证据 | `e2e/live-scan.mjs` 真实扫描件 11/11；`e2e/live-corpus.mjs` **5 份真实 PDF**（4 份检验报告 + 1 份超声）；`test/table-reconstruct.test.ts` 用真实几何夹具 |
+| 长任务量化 | 电子版 ~26s（0.5s+25.4s）；扫描件 65–80s/页；OCR ~45s/页是硬下限（rec 按框数线性）；详见 CONTEXT §10.8 |
 | 真实语料结论 | **4/4 份检验报告重建行数 = 真实项目数**（24/6/1/1）；散文本（超声）被 `noMetrics` 拦下或默认零勾选 |
 | 字段级标定 | 32 行：行对齐/名称/结果/参考范围/状态 **32/32**，单位 **28/32**，日期 4/4（真值看图录入，`eval/corpus/truth.json`；报告见 `product4/docs/features/health-track/health-track-真实语料标定.md`） |
 

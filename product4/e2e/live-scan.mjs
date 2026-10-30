@@ -161,7 +161,8 @@ for (const [name, value, ref] of GT) {
 check("6 行指标（名称+值+参考范围）全对", rowHits === 6, `${rowHits}/6`);
 
 /* 抽取 → 预览确认闸（**不入库**） */
-await page.click('[data-testid="extract-btn"]');
+// page.click 会被浮层 section 拦截（语料走查实测）→ 用元素 click
+await page.evaluate(() => document.querySelector('[data-testid="extract-btn"]')?.click());
 const preview = await waitFor(
   "抽取完成",
   () => {
@@ -181,7 +182,7 @@ check("抽取出指标行", preview.rows >= 5, `${preview.rows} 行`);
 check("日期可编辑且有值（扫描件常丢页脚日期）", /^\d{4}-\d{2}-\d{2}$/.test(preview.date), preview.date);
 
 /* 停在确认闸前：真实体检数据要不要入库由人决定 */
-await page.click('[data-testid="discard-preview"]');
+await page.evaluate(() => document.querySelector('[data-testid="discard-preview"]')?.click());
 const cleared = await page.evaluate(() => !document.querySelector('[data-testid="preview-panel"]'));
 check("放弃预览后状态回正（未入库）", cleared === true);
 
