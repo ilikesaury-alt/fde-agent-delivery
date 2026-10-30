@@ -14,6 +14,16 @@
 
 const fs = await import("node:fs");
 const path = await import("node:path");
+const url = await import("node:url");
+// 注意：ego-browser 的 nodejs 通道把脚本当**非模块** eval —— 不能用静态 import，
+// 也不能用 import.meta（CJS 下直接 SyntaxError）；而且 `process.cwd()` 是 ego 自己的安装目录，
+// 不是本仓目录。所以路径一律写绝对路径。
+const P4 = "H:/Work/Projects/Personal/fde-agent-delivery/product4";
+const { scoreReport, parsePreviewRows, aggregate } = await import(
+  url.pathToFileURL(path.resolve(P4, "e2e/corpus-score.mjs")).href
+);
+
+const TRUTH = JSON.parse(fs.readFileSync(path.resolve(P4, "eval/corpus/truth.json"), "utf8"));
 
 const BASE = "https://health-track.ilikesaury.workers.dev";
 const SECRETS = "H:/Work/Projects/Personal/fde-agent-delivery/product4/.secrets.json";
@@ -100,6 +110,7 @@ const results = [];
 for (const file of files) {
   const buf = fs.readFileSync(path.join(DIR, file));
   const t0 = Date.now();
+  const key = file.replace(/\.pdf$/i, "");
   const rec = { file, sizeKB: Math.round(buf.length / 1024), path: "", note: "", ms: 0 };
 
   try {
@@ -155,12 +166,29 @@ for (const file of files) {
     rec.checkDate = s.date;
     // 记录勾选数：散文式报告（无参考范围）默认应当「一条都不勾」
     rec.checked = await page.evaluate(() => document.querySelectorAll('[data-testid^="check-row-"]:checked').length);
+    const rawRows = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="preview-panel"] table tbody tr')).map((tr) => ({
+        checked: tr.querySelector('[data-testid^="check-row-"]')?.checked ?? false,
+        cells: Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim()),
+      })),
+    );
+    rec.preview = rawRows;
     await page.evaluate(() => document.querySelector('[data-testid="discard-preview"]')?.click());
     await sleep(600);
   } catch (e) {
     rec.failed = true;
     rec.note = `${rec.note ? rec.note + " · " : ""}失败：${e instanceof Error ? e.message : String(e)}`.slice(0, 160);
   }
+
+  // 真值按**文件名前缀**匹配（真值集里只写 hash 前 20 位，便于人读）
+  const truthEntry = Object.entries(TRUTH).find(([k]) => k !== "_readme" && key.startsWith(k));
+  const truth = truthEntry?.[1];
+  if (truth && rec.preview?.length) {
+    rec.score = scoreReport(truth, parsePreviewRows(rec.preview));
+    rec.dateOk = rec.checkDate === truth.date;
+    rec.title = truth.title;
+  }
+  delete rec.preview;
 
   rec.ms = Date.now() - t0;
   results.push(rec);
@@ -170,8 +198,18 @@ for (const file of files) {
       `${rec.path === "scan" ? `重建=${rec.scanRows}行 表头=${rec.scanHeaderOk ? "ok" : "no"} 单页=${rec.pageSec ?? "?"}s ` : ""}` +
       `${(rec.ms / 1000).toFixed(0)}s ${rec.note}`,
   );
+  if (rec.score) {
+    const sc = rec.score;
+    const lines = [
+      `    真值标定 ${rec.title}：行 ${sc.matched}/${sc.truth} · 名称 ${sc.name}/${sc.truth} · 结果 ${sc.value}/${sc.truth} · 单位 ${sc.unit}/${sc.truth} · 参考范围 ${sc.ref}/${sc.truth} · 状态 ${sc.status}/${sc.truth} · 日期 ${rec.dateOk ? "✓" : "✗"}`,
+    ];
+    if (sc.missed.length) lines.push(`    漏行：${sc.missed.join("、")}`);
+    if (sc.extra.length) lines.push(`    多行：${sc.extra.join("、")}`);
+    for (const m of sc.misses) lines.push(`    ${m}`);
+    const NL = String.fromCharCode(10);
+    console.log(lines.join(NL));
+  }
 }
-
 fs.writeFileSync(OUT, JSON.stringify(results, null, 2), "utf8");
 
 const ok = results.filter((r) => !r.failed).length;
@@ -180,6 +218,21 @@ console.log(`语料走查：可用 ${ok} / ${results.length}`);
 console.log(`扫描件 ${results.filter((r) => r.path === "scan").length} 份 · 电子版 ${results.filter((r) => r.path === "text").length} 份`);
 for (const r of results.filter((x) => x.path === "scan")) {
   console.log(`  · ${r.file.slice(0, 20)}… 重建 ${r.scanRows} 行 · 表头 ${r.scanHeaderOk ? "识别" : "未识别"} · 抽取 ${r.extractRows ?? "-"} 行`);
+}
+const scored = results.filter((r) => r.score);
+if (scored.length) {
+  const agg = aggregate(scored.map((r) => r.score));
+  const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
+  console.log(`
+真值标定（${scored.length} 份有真值的报告）：`);
+  console.log(`  行对齐 ${agg.matched}/${agg.truth} ${pct(agg.matched, agg.truth)}`);
+  console.log(`  名称   ${agg.name}/${agg.truth} ${pct(agg.name, agg.truth)}`);
+  console.log(`  结果   ${agg.value}/${agg.truth} ${pct(agg.value, agg.truth)}`);
+  console.log(`  单位   ${agg.unit}/${agg.truth} ${pct(agg.unit, agg.truth)}`);
+  console.log(`  参考范围 ${agg.ref}/${agg.truth} ${pct(agg.ref, agg.truth)}`);
+  console.log(`  状态   ${agg.status}/${agg.truth} ${pct(agg.status, agg.truth)}`);
+  console.log(`  日期   ${scored.filter((r) => r.dateOk).length}/${scored.length}`);
+  console.log(`  多行合计 ${scored.reduce((n, r) => n + r.score.extra.length, 0)} 行 · 漏行合计 ${scored.reduce((n, r) => n + r.score.missed.length, 0)} 行`);
 }
 console.log(`明细：${OUT}`);
 await task.close?.();

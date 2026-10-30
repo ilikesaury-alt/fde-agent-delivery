@@ -89,9 +89,10 @@ npm run eval           # 真网关抽取评测：行级准确率 + 红线（需 
 
 线上（需浏览器通道，见 CONTEXT「环境约束」）：
 ```bash
-ego-browser nodejs < e2e/live-e2e.mjs   # 接口级 39 项
-ego-browser nodejs < e2e/live-ocr.mjs   # 扫描件路径 10 项
-ego-browser nodejs < e2e/live-ui.mjs    # 真实点击走查 26 项
+ego-browser nodejs < e2e/live-e2e.mjs    # 接口级 39 项
+ego-browser nodejs < e2e/live-scan.mjs   # 单份真实扫描件全链路 11 项
+ego-browser nodejs < e2e/live-corpus.mjs # 真实语料走查 + 字段级标定（4 份真值 / 32 行）
+ego-browser nodejs < e2e/live-ui.mjs     # 真实点击走查 33 项
 ```
 
 ### 4.2 人工用例（需真实环境）

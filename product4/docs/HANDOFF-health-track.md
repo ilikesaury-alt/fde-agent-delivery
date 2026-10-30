@@ -28,7 +28,7 @@ product4/
 │   ├── types.ts                 领域类型（共享形状）
 │   ├── extract.ts  ★            LLM 抽取 + 校验 + 重试（核心纪律所在）
 │   ├── trend.ts     ★           参考范围解析 / 状态判定 / 趋势聚合（纯函数）
-│   ├── metrics-dict.ts ★        指标名归一字典（23 个高频指标）
+│   ├── metrics-dict.ts ★        指标名归一字典（46 个标准名；含血常规五分类面板，`#`/`%` 分线）
 │   ├── interpret.ts + interpret-guard.ts ★  解读三道闸 + 红线守卫
 │   ├── repo.ts                  D1 实现 + 内存实现（同接口）
 │   ├── service.ts               落库编排（含手工补录合并）
@@ -40,7 +40,7 @@ product4/
 ├── test/*.ts                    128 项单测（node --experimental-strip-types）
 ├── eval/                        真网关评测（抽取 + 红线）
 ├── scripts/{deploy.mjs,local-verify.mjs}
-└── e2e/{live-e2e.mjs,live-ocr.mjs,live-ui.mjs}   经 ego-browser 跑
+└── e2e/{live-e2e,live-scan,live-corpus,live-ui}.mjs   经 ego-browser 跑（`live-ocr.mjs` 已随服务端 OCR 下线删除）
 ```
 
 ## 2.1 现状标注继承（来自 CONTEXT §7.3 `code-reality-check`）
@@ -142,12 +142,14 @@ product4/
 | 性能 | 单页 12–20s（4 线程 WASM）；首次需下载模型 20.5MB（走百度 CDN，浏览器缓存） |
 | 证据 | `e2e/live-scan.mjs` 真实扫描件 11/11；`e2e/live-corpus.mjs` **5 份真实 PDF**（4 份检验报告 + 1 份超声）；`test/table-reconstruct.test.ts` 用真实几何夹具 |
 | 真实语料结论 | **4/4 份检验报告重建行数 = 真实项目数**（24/6/1/1）；散文本（超声）被 `noMetrics` 拦下或默认零勾选 |
+| 字段级标定 | 32 行：行对齐/名称/结果/参考范围/状态 **32/32**，单位 **28/32**，日期 4/4（真值看图录入，`eval/corpus/truth.json`；报告见 `product4/docs/features/health-track/health-track-真实语料标定.md`） |
 
 ## 6. 下一步（按价值排序）
 
-1. **真实语料标定抽取准确率**（最大未验证面）：拿自己 3–5 份真实报告跑 `npm run eval`
-   的同一套比较逻辑，把失败形态记进 CONTEXT §判断，再决定改 prompt 还是改解析。
-2. **补指标字典**：目前 23 个高频指标。真实报告跑完后按「未归一但高频」的顺序补。
+1. **真实语料扩样**（最大未验证面，需外部输入）：现有 5 份报告同医院/同批次/单页/150 DPI，
+   跨页表格、合并单元格、彩色底纹、手机拍照（倾斜/阴影）全无证据 —— 拿到新样本才能测。
+2. **补指标字典**：目前 **46 个**标准名（含血常规五分类面板）。真实报告里「未归一但高频」的
+   按频次继续补；`PCT` 这类缩写撞车（血小板压积 vs 降钙素原）一律不合并。
 3. **指标手动合并入口**：同一指标的跨医院变体（如「尿素」vs「尿素氮」）目前只能分线显示。
    若实测断裂频繁，再加「合并到某个标准名」的 UI + 数据迁移。
 4. **多成员档案**：表已有 `profile_id`，只需 UI 与权限。
@@ -160,9 +162,10 @@ cd product4
 npm run typecheck && npm test && npm run build && npm run verify:local
 npm run eval
 node scripts/deploy.mjs --skip-migrate
-ego-browser nodejs < e2e/live-e2e.mjs
-ego-browser nodejs < e2e/live-ocr.mjs
-ego-browser nodejs < e2e/live-ui.mjs
+ego-browser nodejs < e2e/live-e2e.mjs       # 接口级 39 项
+ego-browser nodejs < e2e/live-scan.mjs      # 单份真实扫描件全链路 11 项
+ego-browser nodejs < e2e/live-corpus.mjs    # 目录级真实语料批量走查（5 份 PDF）
+ego-browser nodejs < e2e/live-ui.mjs        # 真实点击走查 33 项
 ```
 
 ## 8. 相关技能（真源在全局库，项目内 junction）

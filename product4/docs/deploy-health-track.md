@@ -62,7 +62,7 @@ npx wrangler d1 execute health-track-db --remote --json \
 | 套件 | 结果 | 覆盖 |
 |---|---|---|
 | `e2e/live-e2e.mjs` | **39 / 39** | A1 抽取 / A3 手工 / A4 趋势 / A5 异常 / A6 解读+拒答 / A7 令牌 / 错误码 / 清理 |
-| `e2e/live-ocr.mjs` | **10 / 10** | A2 扫描件：canvas 合成无文字层扫描件 → OCR → 抽取 → 判偏高 |
+| ~~`e2e/live-ocr.mjs`~~ | **10 / 10** | ~~A2 扫描件：canvas 合成无文字层扫描件 → OCR → 抽取 → 判偏高~~（**套件已随服务端 OCR 下线删除**，2026-10-29；现行路径见下方「扫描件改造后」小节） |
 | `e2e/live-ui.mjs` | **26 / 26** | 真实点击：令牌 → 粘贴 → 解析 → **放弃不入库** → 确认入库 → 时间线 → 手工 → 趋势图 → 解读 |
 
 `npm run eval`（真网关）：**行级 100%（28/28）· 字段级 100% · 红线 10/10**。
@@ -136,7 +136,8 @@ cd product4
 npm run typecheck && npm test && npm run build && npm run verify:local
 npm run eval                                   # 需 .secrets.json
 node scripts/deploy.mjs                        # 部署（含迁移 + 双探针）
-ego-browser nodejs < e2e/live-e2e.mjs
-ego-browser nodejs < e2e/live-ocr.mjs
-ego-browser nodejs < e2e/live-ui.mjs
+ego-browser nodejs < e2e/live-e2e.mjs       # 接口级 39 项
+ego-browser nodejs < e2e/live-scan.mjs      # 单份真实扫描件全链路 11 项
+ego-browser nodejs < e2e/live-corpus.mjs    # 目录级真实语料批量走查（5 份 PDF）
+ego-browser nodejs < e2e/live-ui.mjs        # 真实点击走查 33 项
 ```

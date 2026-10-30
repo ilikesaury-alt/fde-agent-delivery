@@ -1,0 +1,65 @@
+{
+  "_readme": [
+    "真实语料真值集：逐份报告『人工看图录入』，不是抄模型输出。",
+    "录入口径：name=报告上的中文名称（去掉开头的 * 记号），code=项目名称缩写列，",
+    "value=结果列原文（含 < > ≤ 等界值符号，去掉 ↑↓ 箭头），unit=单位列，ref=参考区间列原文，",
+    "flag=报告上印的方向标记（up/down/空）。",
+    "来源：成都市公共卫生临床医疗中心 2026-04-08 检验报告单（用户提供的真实 PDF，已脱敏：仅保留用户本人授权的报告内容）。"
+  ],
+  "tmp_0343860376850bb9": {
+    "title": "血常规五分类",
+    "date": "2026-04-08",
+    "rows": [
+      { "code": "WBC", "name": "白细胞计数", "value": "5.44", "unit": "10^9/L", "ref": "3.5-9.5", "flag": "" },
+      { "code": "NEU#", "name": "中性粒细胞数", "value": "3.20", "unit": "10^9/L", "ref": "1.80-6.30", "flag": "" },
+      { "code": "LYM#", "name": "淋巴细胞数", "value": "1.60", "unit": "10^9/L", "ref": "1.10-3.20", "flag": "" },
+      { "code": "MONO#", "name": "单核细胞数", "value": "0.47", "unit": "10^9/L", "ref": "0.10-0.60", "flag": "" },
+      { "code": "EOS#", "name": "嗜酸性细胞数", "value": "0.14", "unit": "10^9/L", "ref": "0.02-0.52", "flag": "" },
+      { "code": "BASO#", "name": "嗜碱性细胞数", "value": "0.03", "unit": "10^9/L", "ref": "0-0.06", "flag": "" },
+      { "code": "NEU%", "name": "中性粒细胞率", "value": "58.8", "unit": "%", "ref": "40-75", "flag": "" },
+      { "code": "LYM%", "name": "淋巴细胞率", "value": "29.4", "unit": "%", "ref": "20.0-50.0", "flag": "" },
+      { "code": "MONO%", "name": "单核细胞率", "value": "8.6", "unit": "%", "ref": "3.0-10.0", "flag": "" },
+      { "code": "EOS%", "name": "嗜酸性细胞率", "value": "2.6", "unit": "%", "ref": "0.4-8.0", "flag": "" },
+      { "code": "BASO%", "name": "嗜碱性细胞率", "value": "0.6", "unit": "%", "ref": "0-1", "flag": "" },
+      { "code": "RBC", "name": "红细胞计数", "value": "5.65", "unit": "10^12/L", "ref": "4.30-5.80", "flag": "" },
+      { "code": "HGB", "name": "血红蛋白", "value": "162.0", "unit": "g/L", "ref": "130-175", "flag": "" },
+      { "code": "HCT", "name": "红细胞压积", "value": "49.50", "unit": "%", "ref": "40-50", "flag": "" },
+      { "code": "MCV", "name": "红细胞平均体积", "value": "87.6", "unit": "fL", "ref": "82.0-100.0", "flag": "" },
+      { "code": "MCH", "name": "RBC平均HGB含量", "value": "28.7", "unit": "pg", "ref": "27.0-34.0", "flag": "" },
+      { "code": "MCHC", "name": "RBC平均HGB浓度", "value": "327.0", "unit": "g/L", "ref": "316-354", "flag": "" },
+      { "code": "RDW-SD", "name": "RBC分布宽度一标准差", "value": "41.6", "unit": "fL", "ref": "30-90", "flag": "" },
+      { "code": "RDW-CV", "name": "RBC分布宽度-变异系数", "value": "13.1", "unit": "%", "ref": "11-16", "flag": "" },
+      { "code": "PLT", "name": "血小板计数", "value": "181.0", "unit": "10^9/L", "ref": "125-350", "flag": "" },
+      { "code": "MPV", "name": "血小板平均体积", "value": "10.7", "unit": "fL", "ref": "7-11", "flag": "" },
+      { "code": "PCT", "name": "血小板压积", "value": "0.190", "unit": "%", "ref": "0.108-0.282", "flag": "" },
+      { "code": "PDW", "name": "血小板体积分布宽度", "value": "13.5", "unit": "%", "ref": "15-17", "flag": "down" },
+      { "code": "P-LCR", "name": "大血小板比率", "value": "32.3", "unit": "%", "ref": "11-45", "flag": "" }
+    ]
+  },
+  "tmp_4ab628ba14eed905": {
+    "title": "乙肝两对半定量 + 乙肝表面抗原定量（高值）",
+    "date": "2026-04-08",
+    "rows": [
+      { "code": "HBsAg(H)", "name": "乙肝表面抗原定量（高值）", "value": "78.44", "unit": "IU/ml", "ref": "0-0.05", "flag": "up" },
+      { "code": "HBsAg", "name": "乙肝表面抗原定量(CLIA)", "value": "78.440", "unit": "IU/ml", "ref": "0-0.05", "flag": "up" },
+      { "code": "HBsAb", "name": "乙肝表面抗体定量(CLIA)", "value": "<2.000", "unit": "mIU/ml", "ref": "0-10", "flag": "" },
+      { "code": "HBeAg", "name": "乙肝e抗原定量(CLIA)", "value": "<0.05", "unit": "IU/mL", "ref": "0-0.1", "flag": "" },
+      { "code": "HBeAb", "name": "乙肝e抗体定量(CLIA)", "value": ">5.00", "unit": "IU/ml", "ref": "0-0.15", "flag": "up" },
+      { "code": "HBcAb", "name": "乙肝核心抗体定量(CLIA)", "value": ">25.00", "unit": "IU/ml", "ref": "0-0.35", "flag": "up" }
+    ]
+  },
+  "tmp_4ad1303f48408d57": {
+    "title": "甲胎蛋白",
+    "date": "2026-04-08",
+    "rows": [
+      { "code": "AFP", "name": "甲胎蛋白", "value": "3.15", "unit": "ng/mL", "ref": "0-10", "flag": "" }
+    ]
+  },
+  "tmp_9408caabada91809": {
+    "title": "乙肝DNA",
+    "date": "2026-04-08",
+    "rows": [
+      { "code": "HBVDNA", "name": "乙肝病毒DNA", "value": "<500", "unit": "IU/ml", "ref": "<500", "flag": "" }
+    ]
+  }
+}
