@@ -87,12 +87,17 @@ cd product5
 npm run typecheck    # 类型检查
 npm test             # 单元与契约测试：88 项
 npm run build        # 构建
-npm run e2e:local    # 端到端（真实构建产物 + 真实 HTTP + 真实 feed 夹具 + SQLite 替身）：22 项
+npm run e2e:local    # 端到端·接口级（真实构建产物 + 真实 HTTP + 真实 feed 夹具 + SQLite 替身）：22 项
+npm run e2e:browser  # 端到端·浏览器级（Playwright + 真实 Chromium，需出网）：18 项
 npm run eval         # 阈值标定（需 eval/scores.json）
 ```
 
 `npm run e2e:local` 覆盖：抓取解析、跨源去重、跨请求持久化去重、失败隔离、源健康分级、
 日报生成与读回、源健康历史、首页 SSR 与四个页签。
+
+`npm run e2e:browser`（浏览器级，需出网；本机需代理时加 `PROXY=http://127.0.0.1:7890`）覆盖：
+客户端水合是否成功、四个页签点击是否真切换、分数徽标、折叠区展开、日报 Markdown 渲染、
+外链可点、**无 JS 运行时错误**、**无失败网络请求** —— 这是「页面能打开」和「页面能用」的区别。
 
 ### 4.2 人工用例（需真实环境）
 

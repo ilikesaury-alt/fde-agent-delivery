@@ -102,7 +102,7 @@ product5/
 - **50 条评测标签是 AI 初标，非人工标注** —— 阈值数字的可靠性受此限制（流程可复核）
 - **CPU 直接读数未取**（A9 只测了 subrequest 6/50 与墙钟 2.7–5s；CPU 需看 Dashboard/observability）
 - **Cron 的真实触发记录未观测**（只验证了注册与手动等价路径；需等到点后查 Dashboard 或 `wrangler tail`）
-- **未做浏览器真人走查**（页面为自研 Markdown 渲染，四页签 SSR 已验，交互未验）
+- ~~未做浏览器走查~~ → **已补**：`e2e/browser-e2e.mjs`（Playwright + 真实 Chromium 打线上站点）**18/18 通过** —— 水合、页签点击、分数徽标、折叠展开、日报 Markdown 渲染、外链可点、无 JS 错误、无失败请求。截图 `product5/docs/e2e-evidence/browser-e2e.png`
 
 ## 6. 下一步（按价值排序）
 
@@ -119,7 +119,8 @@ product5/
 cd product5
 npm install --ignore-scripts
 npm run typecheck && npm test && npm run build
-npm run e2e:local                                   # 22 项
+npm run e2e:local                                   # 22 项（接口/SSR 级，本机可跑）
+npm run e2e:browser                                 # 18 项（浏览器交互级，需出网；可加 PROXY=… BASE=…）
 npm run eval                                       # 阈值标定（需 eval/scores.json）
 node scripts/deploy.mjs --secrets .secrets.json     # 构建→迁移→部署→探针
 node scripts/deploy.mjs --probe-only                # 只验线上，不重新部署
