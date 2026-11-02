@@ -42,6 +42,11 @@ type RankedItem = {
 
 type TopResponse = { storage: string; threshold: number; count: number; items: RankedItem[] };
 
+type DigestResponse = {
+  storage: string;
+  digest: { date: string; markdown: string; threshold: number; counts: { selected: number; skippedQuota: number } } | null;
+};
+
 type FeedResponse = {
   fetchedAt: string;
   elapsedMs: number;
@@ -82,6 +87,7 @@ export default function IndexPage() {
   const [token, setToken] = useState("");
   const [data, setData] = useState<FeedResponse | null>(null);
   const [top, setTop] = useState<TopResponse | null>(null);
+  const [digest, setDigest] = useState<DigestResponse["digest"]>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,11 +110,16 @@ export default function IndexPage() {
         return;
       }
       setData(body);
-      // 精选只读库、不触网：与抓取并行拉，互不阻塞
-      void fetch("/api/top?limit=12", { headers: tk ? { authorization: `Bearer ${tk}` } : {} })
+      // 精选与日报都只读库、不触网：与抓取并行拉，互不阻塞
+      const h: Record<string, string> = tk ? { authorization: `Bearer ${tk}` } : {};
+      void fetch("/api/top?limit=12", { headers: h })
         .then((r) => r.json() as Promise<TopResponse>)
         .then((t) => setTop(t))
         .catch(() => setTop(null));
+      void fetch("/api/digest", { headers: h })
+        .then((r) => r.json() as Promise<DigestResponse>)
+        .then((d) => setDigest(d.digest))
+        .catch(() => setDigest(null));
     } catch {
       setError("网络异常，请稍后重试。");
       setData(null);
@@ -238,6 +249,26 @@ export default function IndexPage() {
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {digest && (
+            <section className="mb-6">
+              <h2 className="mb-1 text-sm font-medium text-emerald-300">
+                日报 · {digest.date}
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  阈值 {digest.threshold} · 入选 {digest.counts.selected} 条
+                  {digest.counts.skippedQuota > 0 ? ` · 单源配额让位 ${digest.counts.skippedQuota} 条` : ""}
+                </span>
+              </h2>
+              <details className="rounded border border-emerald-500/25 bg-slate-900/50 px-3 py-2">
+                <summary className="cursor-pointer text-xs text-slate-400">
+                  展开全文（每天 00:30 UTC 自动生成 · 手动刷新走 POST /api/digest）
+                </summary>
+                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-300">
+                  {digest.markdown}
+                </pre>
+              </details>
             </section>
           )}
 

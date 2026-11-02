@@ -109,7 +109,9 @@ const token = readAccessToken(secretsFile);
  * 部署会因此以 exit 1 结束 —— 看起来像部署失败，其实只是探针发不出去。
  * 所以：设了 DEPLOY_PROXY / HTTPS_PROXY 时走 curl -x；否则用 fetch。
  */
-const PROXY = process.env.DEPLOY_PROXY ?? process.env.HTTPS_PROXY ?? process.env.https_proxy ?? "";
+// ⚠️ .trim() 必须加：Windows cmd 的 `set X=Y && ...` 会把尾空格带进值，
+// curl 会报 `Unsupported proxy syntax ... ` （实测踩过，探针全灭）
+const PROXY = (process.env.DEPLOY_PROXY ?? process.env.HTTPS_PROXY ?? process.env.https_proxy ?? "").trim();
 
 /** 统一的一次请求（返回可判定的 status + 文本 + content-type），代理模式下走 curl */
 function requestOnce(url, timeoutMs) {

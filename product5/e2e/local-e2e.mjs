@@ -270,6 +270,35 @@ check(
   JSON.stringify(snap.map((s) => `${s.sourceId}:${s.lastHealth}/base=${s.baselineCount}`)),
 );
 
+// 增量 4：日报生成（POST 手动重跑，与 cron 同一实现 lib/daily.ts）
+const gen = await fetch(`${BASE}/api/digest`, { method: "POST" }).then(async (r) => ({
+  status: r.status,
+  body: await r.json().catch(() => null),
+}));
+check(
+  "增量4 POST /api/digest 生成当日日报（400 行以内）",
+  gen.status === 200 && gen.body?.date?.length === 10 && typeof gen.body?.digest?.markdown === "string",
+  `status=${gen.status} date=${gen.body?.date} 入选=${gen.body?.stats?.selected}`,
+);
+const md = gen.body?.digest?.markdown ?? "";
+check(
+  "增量4 日报含全部 6 板块（固定结构）",
+  ["一、今日概览", "二、头条", "三、值得一看", "四、分源视角", "五、源健康", "六、口径说明"].every((h) => md.includes(h)),
+  `长度=${md.length}`,
+);
+const dg = await getJson("/api/digest");
+check(
+  "增量4 GET /api/digest 能读回刚生成的日报",
+  dg.status === 200 && dg.body?.digest?.date === gen.body?.date,
+  `status=${dg.status}`,
+);
+const dgList = await getJson("/api/digest?list=1");
+check(
+  "增量4 日报索引可列（供历史回看）",
+  dgList.status === 200 && Array.isArray(dgList.body?.list) && dgList.body.list.length >= 1,
+  `list=${dgList.body?.list?.length}`,
+);
+
 // A5：首页 SSR（1101 类问题的本地探测器）
 const home = await realFetch(`${BASE}/`);
 const html = await home.text();

@@ -6,6 +6,7 @@ import "./rss.test.ts";
 import "./store.test.ts";
 import "./score.test.ts";
 import "./llm.test.ts";
+import "./digest.test.ts";
 import "./routes.test.ts";
 
 await runAll();

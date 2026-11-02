@@ -80,6 +80,35 @@ export type ScoreRow = {
 
 export type RankedItem = StoredItem & { total: number; reason: string; scoredAt: number };
 
+/** 一份日报（落库形态） */
+export type DigestRecord = {
+  date: string;
+  markdown: string;
+  threshold: number;
+  perSourceMax: number;
+  topN: number;
+  counts: {
+    fetched: number;
+    kept: number;
+    scored: number;
+    aboveThreshold: number;
+    selected: number;
+    skippedQuota: number;
+  };
+  model: string;
+  promptVersion: string;
+};
+
+/** D1 实现里「通用部分」的类型：日报方法是后挂的，避免基对象声明重复要求 */
+export type StoreBase = Omit<Store, "saveDigest" | "getDigest" | "listDigests" | "countItems" | "countScores">;
+
+export type DigestSlim = {
+  date: string;
+  selected: number;
+  threshold: number;
+  updatedAt: number;
+};
+
 export type Store = {
   /** 读各源快照（baseline 用于判定「条目骤降」） */
   listSourceStates(): Promise<SourceState[]>;
@@ -97,6 +126,14 @@ export type Store = {
   listUnscored(limit?: number): Promise<StoredItem[]>;
   /** 读达到阈值的条目（按总分倒序）—— 精选与日报的数据源 */
   listTopScored(opts: { threshold: number; limit?: number }): Promise<RankedItem[]>;
+  /** 写日报（同一天重跑 = 覆盖：日报是「该日最新结论」而非追加日志） */
+  saveDigest(record: DigestRecord, now?: number): Promise<void>;
+  getDigest(date: string): Promise<DigestRecord | null>;
+  /** 日报列表（只给索引字段，不拉全文） */
+  listDigests(limit?: number): Promise<DigestSlim[]>;
+  /** 库内条目总数 / 已评分总数（日报口径统计用） */
+  countItems(): Promise<number>;
+  countScores(): Promise<number>;
 };
 
 export function contentKeyOf(item: Pick<RawItem, "link">): string {
@@ -116,6 +153,7 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
   const sources = new Map<string, SourceState>();
   const health: HealthRow[] = [];
   const scores = new Map<string, ScoreRow & { scoredAt: number }>();
+  const digests = new Map<string, DigestRecord & { updatedAt: number }>();
 
   return {
     async listSourceStates() {
@@ -216,6 +254,30 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
       return out.sort((a, b) => b.total - a.total).slice(0, Math.max(1, opts.limit ?? 20));
     },
 
+    async saveDigest(record, now = Date.now()) {
+      digests.set(record.date, { ...record, updatedAt: now });
+    },
+
+    async getDigest(date) {
+      const d = digests.get(date);
+      return d ? { ...d } : null;
+    },
+
+    async listDigests(limit = 20) {
+      return [...digests.values()]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit)
+        .map((d) => ({ date: d.date, selected: d.counts.selected, threshold: d.threshold, updatedAt: d.updatedAt }));
+    },
+
+    async countItems() {
+      return items.size;
+    },
+
+    async countScores() {
+      return scores.size;
+    },
+
     _size() {
       return { items: items.size, health: health.length, scores: scores.size };
     },
@@ -240,7 +302,7 @@ type ItemRow = {
 };
 
 export function createD1Store(db: D1Like): Store {
-  return {
+  const base: StoreBase = {
     async listSourceStates() {
       const res = await db
         .prepare(
@@ -469,6 +531,117 @@ export function createD1Store(db: D1Like): Store {
         elapsedMs: r.elapsed_ms ?? null,
         checkedAt: r.checked_at,
       }));
+    },
+  };
+  return attachDigestMethods(base, db);
+}
+
+/* ── 日报（D1） ── */
+function attachDigestMethods(store: StoreBase, db: D1Like): Store {
+  return {
+    ...store,
+    async saveDigest(record, now = Date.now()) {
+      await db
+        .prepare(
+          `INSERT INTO daily
+             (date, markdown, threshold, per_source_max, top_n, fetched, kept, scored,
+              above_threshold, selected, skipped_quota, model, prompt_version, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(date) DO UPDATE SET
+             markdown = excluded.markdown,
+             threshold = excluded.threshold,
+             per_source_max = excluded.per_source_max,
+             top_n = excluded.top_n,
+             fetched = excluded.fetched,
+             kept = excluded.kept,
+             scored = excluded.scored,
+             above_threshold = excluded.above_threshold,
+             selected = excluded.selected,
+             skipped_quota = excluded.skipped_quota,
+             model = excluded.model,
+             prompt_version = excluded.prompt_version,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(
+          record.date,
+          record.markdown,
+          record.threshold,
+          record.perSourceMax,
+          record.topN,
+          record.counts.fetched,
+          record.counts.kept,
+          record.counts.scored,
+          record.counts.aboveThreshold,
+          record.counts.selected,
+          record.counts.skippedQuota,
+          record.model,
+          record.promptVersion,
+          now,
+          now,
+        )
+        .run();
+    },
+
+    async getDigest(date) {
+      const row = await db
+        .prepare(`SELECT * FROM daily WHERE date = ?`)
+        .bind(date)
+        .first<{
+          date: string;
+          markdown: string;
+          threshold: number;
+          per_source_max: number;
+          top_n: number;
+          fetched: number;
+          kept: number;
+          scored: number;
+          above_threshold: number;
+          selected: number;
+          skipped_quota: number;
+          model: string;
+          prompt_version: string;
+        }>();
+      if (!row) return null;
+      return {
+        date: row.date,
+        markdown: row.markdown,
+        threshold: row.threshold,
+        perSourceMax: row.per_source_max,
+        topN: row.top_n,
+        counts: {
+          fetched: row.fetched,
+          kept: row.kept,
+          scored: row.scored,
+          aboveThreshold: row.above_threshold,
+          selected: row.selected,
+          skippedQuota: row.skipped_quota,
+        },
+        model: row.model,
+        promptVersion: row.prompt_version,
+      };
+    },
+
+    async listDigests(limit = 20) {
+      const res = await db
+        .prepare(`SELECT date, selected, threshold, updated_at FROM daily ORDER BY date DESC LIMIT ?`)
+        .bind(Math.max(1, Math.min(limit, 100)))
+        .all<{ date: string; selected: number; threshold: number; updated_at: number }>();
+      return (res.results ?? []).map((r) => ({
+        date: r.date,
+        selected: r.selected,
+        threshold: r.threshold,
+        updatedAt: r.updated_at,
+      }));
+    },
+
+    async countItems() {
+      const row = await db.prepare(`SELECT COUNT(*) AS n FROM items`).bind().first<{ n: number }>();
+      return Number(row?.n ?? 0);
+    },
+
+    async countScores() {
+      const row = await db.prepare(`SELECT COUNT(*) AS n FROM scores`).bind().first<{ n: number }>();
+      return Number(row?.n ?? 0);
     },
   };
 }

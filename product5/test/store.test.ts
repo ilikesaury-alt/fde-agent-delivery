@@ -238,3 +238,70 @@ describe("store · 评分落库（增量 3）", () => {
     assertEqual((await store.listTopScored({ threshold: 0, limit: 1 })).length, 1);
   });
 });
+
+describe("store · 日报落库（增量 4）", () => {
+  const record = (over: Partial<import("../lib/store.ts").DigestRecord> = {}) => ({
+    date: over.date ?? "2026-11-02",
+    markdown: over.markdown ?? "# 日报\n\n## 一、今日概览\n",
+    threshold: over.threshold ?? 70,
+    perSourceMax: over.perSourceMax ?? 4,
+    topN: over.topN ?? 12,
+    counts:
+      over.counts ?? { fetched: 180, kept: 180, scored: 60, aboveThreshold: 17, selected: 5, skippedQuota: 2 },
+    model: over.model ?? "m",
+    promptVersion: over.promptVersion ?? "score-v1",
+  });
+
+  it("写入后可读回全文与口径字段", async () => {
+    const store = createMemoryStore();
+    await store.saveDigest(record());
+    const back = await store.getDigest("2026-11-02");
+    assert(back);
+    assertEqual(back.threshold, 70);
+    assertEqual(back.counts.selected, 5);
+    assert(back.markdown.includes("今日概览"));
+  });
+
+  it("同一天重跑 = 覆盖（日报是当日最新结论，不是追加）", async () => {
+    const store = createMemoryStore();
+    await store.saveDigest(record({ markdown: "旧" }), 1000);
+    await store.saveDigest(record({ markdown: "新" }), 2000);
+    assertEqual((await store.getDigest("2026-11-02"))?.markdown, "新");
+    assertEqual((await store.listDigests()).length, 1);
+  });
+
+  it("list 按日期/更新时间倒序且只给索引字段", async () => {
+    const store = createMemoryStore();
+    await store.saveDigest(record({ date: "2026-11-01" }), 1000);
+    await store.saveDigest(record({ date: "2026-11-02" }), 2000);
+    const list = await store.listDigests();
+    assertEqual(list.map((d) => d.date), ["2026-11-02", "2026-11-01"]);
+    assert(!("markdown" in (list[0] as object)), "索引不应带全文");
+  });
+
+  it("countItems / countScores 反映库内总量", async () => {
+    const store = createMemoryStore();
+    await store.saveItems([item({ link: "https://a.com/1" }), item({ link: "https://a.com/2" })]);
+    const [k1] = await store.recentItems();
+    await store.saveScores([
+      {
+        contentKey: k1!.contentKey,
+        relevance: 8,
+        novelty: 7,
+        usefulness: 6,
+        authority: 9,
+        total: 76,
+        reason: "r",
+        model: "m",
+        promptVersion: "v",
+      },
+    ]);
+    assertEqual(await store.countItems(), 2);
+    assertEqual(await store.countScores(), 1);
+  });
+
+  it("未写入时 getDigest 返回 null（不编造空日报）", async () => {
+    const store = createMemoryStore();
+    assertEqual(await store.getDigest("2026-11-02"), null);
+  });
+});

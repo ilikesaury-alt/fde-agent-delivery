@@ -116,6 +116,22 @@ export function prefilterAll<T extends ScoreInput>(
 
 /* ─────────────────────── 阶段 2：LLM 打分 ─────────────────────── */
 
+/**
+ * Prompt 版本常量：改 SCORE_SYSTEM_PROMPT 必须同步改这里。
+ * 日报与 scores 表都落此值 —— 标定报告必须能回答「这份分数是哪版 prompt 打的」。
+ */
+export const SCORE_PROMPT_VERSION = "score-v1";
+
+/** 默认精选阈值（由 eval 标定，改模型/prompt 后必须重跑 npm run eval） */
+export const DEFAULT_THRESHOLD = 70;
+
+/** 精选条目上限与单源配额（D11：同一源最多 1/3，避免单源垄断） */
+export const DEFAULT_TOP_N = 12;
+
+export function perSourceMaxOf(topN: number): number {
+  return Math.max(1, Math.floor(topN / 3));
+}
+
 export const SCORE_SYSTEM_PROMPT = `你是 AI 资讯编辑，负责给候选资讯打分。
 
 维度（每项 0-10 的整数）：

@@ -15,11 +15,11 @@ import { defineHandler } from "void";
 
 import { authorize, intEnv, jsonResponse, resolveEnv, resolveFetchImpl, resolveStore } from "../../lib/http.ts";
 import { LLM_MESSAGES, scoreMany } from "../../lib/llm.ts";
-import type { ScoreInput } from "../../lib/score.ts";
+import { SCORE_PROMPT_VERSION, type ScoreInput } from "../../lib/score.ts";
 import type { ScoreRow } from "../../lib/store.ts";
 
-/** prompt 版本：改了 SCORE_SYSTEM_PROMPT 必须改这里（标定报告要能追溯） */
-export const PROMPT_VERSION = "score-v1";
+/** prompt 版本：与 cron / eval 共用同一常量（改 prompt 必须同步） */
+export const PROMPT_VERSION = SCORE_PROMPT_VERSION;
 
 export const POST = defineHandler(async (c) => {
   const denied = authorize(c, c.req.header("authorization"));

@@ -8,6 +8,7 @@
 import { defineHandler } from "void";
 
 import { authorize, intEnv, jsonResponse, resolveStore } from "../../lib/http.ts";
+import { DEFAULT_THRESHOLD, perSourceMaxOf } from "../../lib/score.ts";
 
 /**
  * 默认阈值：**由评测集实测标定**，不是拍脑袋。
@@ -15,7 +16,7 @@ import { authorize, intEnv, jsonResponse, resolveStore } from "../../lib/http.ts
  *   threshold=70 → Precision 100.0% / Recall 77.3% / 漏选 22.7% / F1 0.872（扫描中 F1 最高）
  * 详见 eval/report.md。改模型或改 prompt 后必须重跑 `npm run eval` 并更新此常量。
  */
-export const DEFAULT_THRESHOLD = 70;
+export { DEFAULT_THRESHOLD };
 
 export const GET = defineHandler(async (c) => {
   const denied = authorize(c, c.req.header("authorization"));
