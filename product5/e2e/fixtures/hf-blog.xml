@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Hugging Face Blog（E2E 夹具）</title>
+  <id>tag:huggingface.co,2026:blog</id>
+  <updated>2026-11-02T06:00:00Z</updated>
+  <entry>
+    <title>Wikihack 跨源重复条目（用于验证 A2 去重）</title>
+    <link rel="alternate" type="text/html" href="https://wikihack.netlify.app"/>
+    <id>urn:hf:dup-1</id>
+    <updated>2026-11-02T05:30:00Z</updated>
+    <summary type="html">&lt;p&gt;与 HN 源同一篇文章，应被去重&lt;/p&gt;</summary>
+  </entry>
+  <entry>
+    <title>HF 独有条目：量化微调实战</title>
+    <link href="https://huggingface.co/blog/qlora-in-practice"/>
+    <id>urn:hf:unique-2</id>
+    <published>2026-11-02T04:15:00Z</published>
+    <summary>独立条目，应保留</summary>
+  </entry>
+</feed>

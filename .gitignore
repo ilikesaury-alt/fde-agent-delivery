@@ -8,6 +8,8 @@ dist/
 .void/
 .void-wrangler.jsonc
 .wrangler/
+# Void 构建中间产物（vite build 生成，含 bundle 与 sourcemap）
+.cloudflare/
 
 # 环境变量 / 密钥（绝不提交）
 .env

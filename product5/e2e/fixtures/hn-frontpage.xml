@@ -1,0 +1,17 @@
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Hacker News: Front Page</title><link>https://news.ycombinator.com/</link><description>Hacker News RSS</description><docs>https://hnrss.org/</docs><generator>hnrss v2.1.1</generator><lastBuildDate>Mon, 02 Nov 2026 07:36:21 +0000</lastBuildDate><atom:link href="https://hnrss.org/frontpage" rel="self" type="application/rss+xml"></atom:link><item><title><![CDATA[Show HN: Wikihack – HackerTube, but for Wikipedia articles mentioned on HN]]></title><description><![CDATA[
+<p>After seeing Karpathy's Hackertube and Hackerbooks, I just had to make Wikihack.<p>I scraped all mentions of wikipedia on hackernews and ranked them, and turn them into a scrollable feed to make it a bit more easy to digest / interact with. You can see where people submitted the articles and where people mentioned it in comments.<p>The top shows the most frequently linked articles.<p>Random is random but slightly weighted towards the more frequently linked articles (a little bit like Wikipedia actually).<p>Rising is ranked towards the past 12 months.<p>The entire site is served only through the frontend -- I'll add more features if people enjoy this!</p>
+<hr>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50333339">https://news.ycombinator.com/item?id=50333339</a></p>
+<p>Points: 49</p>
+<p># Comments: 12</p>
+]]></description><pubDate>Mon, 02 Nov 2026 05:06:30 +0000</pubDate><link>https://wikihack.netlify.app</link><dc:creator>aizk</dc:creator><comments>https://news.ycombinator.com/item?id=50333339</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50333339</guid></item><item><title><![CDATA[F/OSS Comics #13: BSD Unix, Part 3 – The Beginning of BSD Unix]]></title><description><![CDATA[
+<p>Article URL: <a href="https://fosscomics.com/posts/13.%20BSD%20Unix%20Part%203%20-%20The%20Beginning%20of%20BSD%20Unix/">https://fosscomics.com/posts/13.%20BSD%20Unix%20Part%203%20-%20The%20Beginning%20of%20BSD%20Unix/</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50332163">https://news.ycombinator.com/item?id=50332163</a></p>
+<p>Points: 87</p>
+<p># Comments: 8</p>
+]]></description><pubDate>Mon, 02 Nov 2026 01:59:38 +0000</pubDate><link>https://fosscomics.com/posts/13.%20BSD%20Unix%20Part%203%20-%20The%20Beginning%20of%20BSD%20Unix/</link><dc:creator>joonehur</dc:creator><comments>https://news.ycombinator.com/item?id=50332163</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50332163</guid></item><item><title><![CDATA[AI fan wikis riddled with errors are muddying the waters of games culture]]></title><description><![CDATA[
+<p>Article URL: <a href="https://www.eurogamer.net/ai-fan-wikis-errors-complicating-games-culture">https://www.eurogamer.net/ai-fan-wikis-errors-complicating-games-culture</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50332086">https://news.ycombinator.com/item?id=50332086</a></p>
+<p>Points: 78</p>
+<p># Comments: 60</p>
+]]></description><pubDate>Mon, 02 Nov 2026 01:47:07 +0000</pubDate><link>https://www.eurogamer.net/ai-fan-wikis-errors-complicating-games-culture</link><dc:creator>rdmuser</dc:creator><comments>https://news.ycombinator.com/item?id=50332086</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50332086</guid></item></channel></rss>

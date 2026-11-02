@@ -1,0 +1,15 @@
+=== 产品⑤ 本地 E2E 证据（真实 build 产物 + 真实 HTTP + 真实 HN feed 夹具）2026-11-02T07:52:45Z ===
+$ npm run e2e:local
+[e2e] shim 已监听 http://127.0.0.1:8901（真实 build 产物 + 夹具上游）
+✔ A1 单源抓取（真实 HN feed）返回条目 — status=200 items=3 261ms
+✔ A1 条目字段完整（标题去 CDATA / 真实链接 / pubDate） — {"title":"Show HN: Wikihack – HackerTube, but for Wikipe","link":"https://wikihack.netlify.app","publishedAt":"2026-11-02T05:06:30.000Z"}
+✔ A1 摘要已去 HTML 标签（真实 feed 描述含 <p>/<a>） — After seeing Karpathy's Hackertube and Hackerbooks, I just h
+✔ A1 源健康 ok 且条目数正确 — {"sourceId":"hn","level":"ok","itemCount":3,"checkedAt":"2026-11-02T07:52:50.423Z"}
+✔ A2 跨源去重：3 条 HN + 2 条 Atom，去重后 4 条 — {"fetched":5,"kept":4,"deduped":1}
+✔ A2 保留的是先出现者（HN 那条），重复的 Atom 条目被丢弃 — 同链接条目数=1
+✔ A6 全源请求整体 200（不因坏源 500） — status=200 17ms
+✔ A6 坏源被分类记录（network）且健康标记 broken — arxiv-cs-ai:network, simonw:network, ithome:network, sspai:network
+✔ A6 好源仍为 ok（失败未放大） — hn:ok | hf-blog:ok | arxiv-cs-ai:broken | simonw:broken | ithome:broken | sspai:broken
+✔ A5 首页 200 + SSR 出内容 — status=200 bytes=1887
+✔ A5 首页 HTML 引用了客户端脚本（水合入口在） — assets 引用=1
+E2E：11/11 通过

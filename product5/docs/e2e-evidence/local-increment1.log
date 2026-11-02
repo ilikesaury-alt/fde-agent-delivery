@@ -1,0 +1,16 @@
+=== 产品⑤ 增量1 本地验证证据（2026-11-02T07:11:54Z） ===
+
+$ npm run typecheck
+> ai-hot-radar@0.1.0 typecheck
+> tsc --noEmit
+
+
+$ npm test
+> node --experimental-strip-types test/run.ts
+
+
+30 通过 / 0 失败（共 30）
+
+$ npm run build
+[32m✓ built in 1.09s[39m
+[32m✓ built in 770ms[39m

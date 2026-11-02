@@ -1,0 +1,21 @@
+=== M0 真环境验证（2026-11-02，经本机代理 127.0.0.1:7890） ===
+
+$ curl --proxy 127.0.0.1:7890 https://ai-hot-radar.ilikesaury.workers.dev/api/health
+{"ok":true,"service":"ai-hot-radar"}
+
+--- 第一次单源调用（部署旧默认超时 8s）：hnrss.org 偶发慢 → timeout（失败隔离按设计工作，随后全量调用成功） ---
+hn: {"level":"broken","error":"timeout"} → 默认超时已改 12s
+
+--- 全源调用（修复 arXiv 端点后，版本 c5dc0553）---
+arxiv: HTTP 200 in 1.7s → health ok, itemCount=40（新端点 rss.arxiv.org/rss/cs.AI）
+
+全源结果（HTTP 200 in 5.08s / 2.72s 两次实测）：
+  hn           ok    条目= 20
+  hf-blog      ok    条目= 40
+  arxiv-cs-ai  ok    条目= 40
+  simonw       ok    条目= 30
+  ithome       ok    条目= 40
+  sspai        ok    条目= 10
+counts: {"fetched":180,"kept":180,"deduped":0} | elapsedMs: 2720 | failures: 无
+
+（原始 JSON 快照：live-m0-snapshot.json）
