@@ -1,6 +1,6 @@
 # FDE 作品集（fde-agent-delivery）
 
-> 个人 FDE（Forward Deployed Engineer）作品集 — **四个已上线**的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
+> 个人 FDE（Forward Deployed Engineer）作品集 — **五个已上线**的个人 AI 工具产品，共享同一套已验证的技术栈与交付流程。
 > 统一技术栈：**Void**（Cloudflare × VoidZero 开源的全栈 Vite 工具链）+ React SSR + Cloudflare Workers + magpie 中转。
 
 ## 产品一览
@@ -11,8 +11,9 @@
 | ② | **内容工作台**（content-studio） | https://content-studio.ilikesaury.workers.dev | 贴文章链接或粘贴素材 → 流式生成小红书图文笔记 + 历史/重新生成 |
 | ③ | **知识库问答**（kb-ask） | https://kb-ask.ilikesaury.workers.dev | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
 | ④ | **体检指标追踪**（health-track） | https://health-track.ilikesaury.workers.dev | 体检报告 → 结构化指标 → 趋势与异常 → 有依据、不越界的解读 |
+| ⑤ | **AI 资讯雷达**（ai-hot-radar） | https://ai-hot-radar.ilikesaury.workers.dev | 定时聚合多源 RSS → 评分精选 → 每日自动日报 |
 
-**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`。
+**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**、⑤ 6 源全可抓（**180 条/轮**）+ 真实评分 **60 条零失败** + 阈值由评测集实测标定（**Precision 100% / Recall 77.3%**）+ 日报自动生成 + 单源配额防垄断（27 条过阈值 → 入选 9 条、让位 18 条）。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`、`product5/docs/deploy-ai-hot-radar.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 
@@ -42,6 +43,16 @@
 │       ├── HANDOFF-content-studio.md  # 技术交接
 │       ├── deploy-content-studio.md   # 部署记录（含 D1 建库链路）
 │       └── e2e-evidence/              # 线上 E2E 证据（live / smoke）
+├── product5/                          # ★ 产品⑤ 主目录（Void 项目，自包含，AI 资讯雷达）
+│   ├── CONTEXT.md                     # 需求活文档 / 验收标准 / 证据（D1–D11 · 四轮数据源演进留痕）
+│   ├── db/migrations/                 # D1 迁移（0001 sources+items / 0002 scores / 0003 daily）
+│   ├── crons/                         # Cron 定时（抓取 :05 / 评分 :20 / 日报 00:30）
+│   ├── eval/                          # 阈值标定（50 条标签 + 扫描 + 报告）
+│   └── docs/
+│       ├── features/ai-hot-radar/     # 交付文档 + 工作原理文档
+│       ├── HANDOFF-ai-hot-radar.md    # 技术交接
+│       ├── deploy-ai-hot-radar.md     # 部署记录 + 线上真问题
+│       └── e2e-evidence/              # 本地 E2E + 线上 M0/增量证据
 ├── product4/                          # ★ 产品④ 主目录（Void 项目，自包含，体检指标追踪）
 │   ├── CONTEXT.md                     # 需求活文档 / 验收标准 / 证据（D1–D6）
 │   ├── db/migrations/                 # D1 迁移（0001：reports + metrics）
@@ -66,19 +77,19 @@
 
 ## 文档地图（按需取用）
 
-| 想看什么 | 产品① | 产品② | 产品③ | 产品④ |
-|---|---|---|---|---|
-| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` | `product3/CONTEXT.md` | `product4/CONTEXT.md` |
-| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` | `product3/docs/features/kb-ask/kb-ask-交付文档.md` | `product4/docs/features/health-track/health-track-交付文档.md` |
-| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` | `product3/docs/features/kb-ask/kb-ask-工作原理.md` | `product4/docs/features/health-track/health-track-工作原理.md` |
-| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` | `product3/docs/HANDOFF-kb-ask.md` | `product4/docs/HANDOFF-health-track.md` |
-| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` | `product3/docs/deploy-kb-ask.md` | `product4/docs/deploy-health-track.md` |
+| 想看什么 | 产品① | 产品② | 产品③ | 产品④ | 产品⑤ |
+|---|---|---|---|---|---|
+| 需求 / 验收标准 / 全部证据 | `product1/CONTEXT.md` | `product2/CONTEXT.md` | `product3/CONTEXT.md` | `product4/CONTEXT.md` | `product5/CONTEXT.md` |
+| 交付文档（测试/业务方） | `product1/docs/features/meeting-digest/meeting-digest-交付文档.md` | `product2/docs/features/content-studio/内容工作台-交付文档.md` | `product3/docs/features/kb-ask/kb-ask-交付文档.md` | `product4/docs/features/health-track/health-track-交付文档.md` | `product5/docs/features/ai-hot-radar/ai-hot-radar-交付文档.md` |
+| 工作原理（开发会话） | `product1/docs/features/meeting-digest/meeting-digest-工作原理.md` | `product2/docs/features/content-studio/内容工作台-工作原理.md` | `product3/docs/features/kb-ask/kb-ask-工作原理.md` | `product4/docs/features/health-track/health-track-工作原理.md` | `product5/docs/features/ai-hot-radar/ai-hot-radar-工作原理.md` |
+| 技术交接（冷启动） | `product1/docs/HANDOFF-meeting-digest.md` | `product2/docs/HANDOFF-content-studio.md` | `product3/docs/HANDOFF-kb-ask.md` | `product4/docs/HANDOFF-health-track.md` | `product5/docs/HANDOFF-ai-hot-radar.md` |
+| 部署记录 / 运维 | `product1/docs/deploy-live-record.md` | `product2/docs/deploy-content-studio.md` | `product3/docs/deploy-kb-ask.md` | `product4/docs/deploy-health-track.md` | `product5/docs/deploy-ai-hot-radar.md` |
 
 跨产品文档：`docs/个人AI智能体交付技术框架与流程.md`（交付流程）、`docs/pi-skills-setup.md`（Skill 重建）。
 
 ## 共享技术栈与关键约定
 
-四个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
+五个产品复用同一套已验证的平台层，关键约定（详见各产品工作原理文档）：
 
 - **layout 必须返回 fragment**：返回 `<html>/<head>/<body>` 会导致 SSR 水合错位（产品① focus-hang 教训，15–31s 主线程阻塞）
 - **密钥仅存 Worker env**（Void `defineEnv` 声明）：前端零密钥、不进仓库；访问令牌保护可选
@@ -90,7 +101,7 @@
 
 | 护栏 | 命令 / 位置 |
 |---|---|
-| 类型检查 + 单测 + 构建（四产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
+| 类型检查 + 单测 + 构建（五产品矩阵） | `.github/workflows/ci.yml` 的 `quality` job |
 | 构建产物校验（SSR bundle / client 资产 / 无明文凭据） | 同上 |
 | 文档引用校验（防断链） | `node .github/scripts/check-doc-links.mjs` |
 | dev server 真启动探活（advisory） | CI `dev-smoke` job（本地沙箱跑不了 workerd，故移入 CI） |

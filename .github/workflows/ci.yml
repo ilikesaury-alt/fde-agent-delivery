@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 质量门：两产品矩阵（typecheck → test → build → 产物校验）
+  # 质量门：五产品矩阵（typecheck → test → build → 产物校验）
   quality:
     name: quality / ${{ matrix.product }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        product: [product1, product2, product3, product4]
+        product: [product1, product2, product3, product4, product5]
     defaults:
       run:
         working-directory: ${{ matrix.product }}
