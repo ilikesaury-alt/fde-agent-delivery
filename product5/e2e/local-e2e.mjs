@@ -299,6 +299,20 @@ check(
   `list=${dgList.body?.list?.length}`,
 );
 
+// 增量 5：源健康历史接口 + 页签 UI
+const srcRes = await getJson("/api/sources?history=10");
+check(
+  "增量5 GET /api/sources 返回各源快照 + 历史",
+  srcRes.status === 200 && srcRes.body?.storage === "ok" && srcRes.body.sources.length > 0,
+  `sources=${srcRes.body?.sources?.length} storage=${srcRes.body?.storage}`,
+);
+const hn = (srcRes.body?.sources ?? []).find((s) => s.id === "hn");
+check(
+  "增量5 源快照含健康状态、基线与连续失败次数",
+  Boolean(hn && hn.lastHealth && typeof hn.consecutiveFailures === "number" && Array.isArray(hn.history)),
+  JSON.stringify({ health: hn?.lastHealth, base: hn?.baselineCount, fails: hn?.consecutiveFailures, hist: hn?.history?.length }),
+);
+
 // A5：首页 SSR（1101 类问题的本地探测器）
 const home = await realFetch(`${BASE}/`);
 const html = await home.text();
@@ -313,6 +327,13 @@ check(
   "A5 首页 HTML 引用了客户端脚本（水合入口在）",
   /<script[^>]+src="\/assets\//.test(html),
   `assets 引用=${(html.match(/<script[^>]+src="\/assets\//g) ?? []).length}`,
+);
+
+// 增量5：首页页签（SSR 首屏就应出现四个页签标签）
+check(
+  "增量5 首页含日报/精选/历史/源健康四个页签",
+  ["日报", "精选", "历史", "源健康"].every((t) => html.includes(t)),
+  `命中=${["日报", "精选", "历史", "源健康"].filter((t) => html.includes(t)).join(",")}`,
 );
 
 server.close();

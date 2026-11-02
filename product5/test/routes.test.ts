@@ -1,6 +1,7 @@
 /** 路由层契约测试：/api/feed 的令牌、源筛选、失败隔离、去重计数、limit */
 import { assert, assertEqual, describe, it } from "./harness.ts";
 import * as feedRoute from "../routes/api/feed.ts";
+import * as sourcesRoute from "../routes/api/sources.ts";
 import { createMemoryStore, type Store } from "../lib/store.ts";
 
 const TOKEN = "secret-token";
@@ -57,6 +58,7 @@ function mockFetch(byHost: Record<string, () => Response>): typeof fetch {
 }
 
 const GET = feedRoute.GET as unknown as Handler;
+const GET_SOURCES = sourcesRoute.GET as unknown as Handler;
 
 describe("/api/feed · 令牌与筛选", () => {
   it("未配置 ACCESS_TOKEN 时不校验令牌", async () => {
@@ -208,5 +210,59 @@ describe("/api/feed · 持久化（增量 2）", () => {
     assert(body.persistError?.includes("存储") === true);
     assert(!String(body.persistError).includes("D1_ERROR"), "不应泄露底层错误体");
     assertEqual(body.items.length, 1, "条目本身照常返回");
+  });
+});
+
+describe("/api/sources · 源健康历史（增量 5）", () => {
+  it("未配置存储时降级为 disabled（不报错）", async () => {
+    const res = await GET_SOURCES(ctx({ url: "/api/sources" }));
+    assertEqual(res.status, 200);
+    const body = (await res.json()) as { storage: string };
+    assertEqual(body.storage, "disabled");
+  });
+
+  it("返回各源快照 + 历史 + 连续失败次数", async () => {
+    const store = createMemoryStore();
+    const src = { id: "hn", name: "Hacker News", url: "https://hnrss.org/frontpage", lang: "en" as const, verified: true };
+    // 先正常一次，再连续坏两次 → consecutiveFailures 应为 2
+    await store.recordRun([{ source: src, health: { sourceId: "hn", level: "ok", itemCount: 20, checkedAt: "t" } }], 1000);
+    await store.recordRun(
+      [{ source: src, health: { sourceId: "hn", level: "broken", error: "timeout", itemCount: 0, checkedAt: "t" } }],
+      2000,
+    );
+    await store.recordRun(
+      [{ source: src, health: { sourceId: "hn", level: "broken", error: "timeout", itemCount: 0, checkedAt: "t" } }],
+      3000,
+    );
+
+    const res = await GET_SOURCES(ctx({ url: "/api/sources", store }));
+    assertEqual(res.status, 200);
+    const body = (await res.json()) as {
+      sources: Array<{
+        id: string;
+        lastHealth: string | null;
+        lastError: string | null;
+        baselineCount: number | null;
+        consecutiveFailures: number;
+        history: Array<{ level: string }>;
+      }>;
+    };
+    const hn = body.sources.find((s) => s.id === "hn");
+    assert(hn);
+    assertEqual(hn!.lastHealth, "broken");
+    assertEqual(hn!.lastError, "timeout");
+    assertEqual(hn!.baselineCount, 20, "正常时的基线应保留");
+    assertEqual(hn!.consecutiveFailures, 2);
+    assertEqual(hn!.history.length, 3, "历史倒序（最新在前）");
+    assertEqual(hn!.history[0]!.level, "broken");
+    assertEqual(hn!.history[2]!.level, "ok");
+  });
+
+  it("?source= 只返回指定源", async () => {
+    const store = createMemoryStore();
+    const res = await GET_SOURCES(ctx({ url: "/api/sources?source=hn", store }));
+    const body = (await res.json()) as { sources: Array<{ id: string }> };
+    assertEqual(body.sources.length, 1);
+    assertEqual(body.sources[0]?.id, "hn");
   });
 });

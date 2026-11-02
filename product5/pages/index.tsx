@@ -1,14 +1,17 @@
 /**
- * 首页 — AI 资讯雷达（增量 3：抓取 + 去重 + 源健康 + **精选**）
+ * 首页 — AI 资讯雷达
  *
- * 评分/日报在增量 3/4 接；本页已展示「精选」与每条评分理由（可核验，不黑盒）。
- * 设计纪律：
- *  - **不掩盖失败**：坏源显式列出（名称 + 错误分类 + 面向用户文案），不静默吞掉
+ * 四个页签：日报 · 精选 · 历史 · 源健康
+ *
+ * 设计纪律（每条都对应一个真实后果）：
+ *  - **不掩盖失败**：坏源显式列出（名称 + 错误分类 + 面向用户文案 + 连续失败次数），不静默吞掉
  *  - **不假装已验证**：源标注「待 M0 实测」的徽标，确认后才可信（CONTEXT D4）
  *  - **不猜**：日期缺失显示「—」，不填当前时间
+ *  - **口径随内容走**：阈值/模型/prompt/配额都写在日报里，读者能核对「为什么是这几条」
+ *  - **口径不一致就说**：日报与精选是两份数据，各自标明来源，不假装是同一份
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const TOKEN_KEY = "radar_token";
 
@@ -29,28 +32,12 @@ type FeedItem = {
   summary: string;
 };
 
-type RankedItem = {
-  contentKey: string;
-  sourceId: string;
-  title: string;
-  link: string;
-  publishedAt: number | null;
-  summary: string;
-  total: number;
-  reason: string;
-};
-
-type TopResponse = { storage: string; threshold: number; count: number; items: RankedItem[] };
-
-type DigestResponse = {
-  storage: string;
-  digest: { date: string; markdown: string; threshold: number; counts: { selected: number; skippedQuota: number } } | null;
-};
-
 type FeedResponse = {
   fetchedAt: string;
   elapsedMs: number;
   budget: { sources: number; maxItemsPerSource: number; timeoutMs: number };
+  storage: string;
+  persisted: { inserted: number; duplicates: number } | null;
   sources: Array<{
     id: string;
     name: string;
@@ -64,6 +51,91 @@ type FeedResponse = {
   items: FeedItem[];
 };
 
+type RankedItem = {
+  contentKey: string;
+  sourceId: string;
+  title: string;
+  link: string;
+  publishedAt: number | null;
+  summary: string;
+  total: number;
+  reason: string;
+};
+
+type TopResponse = {
+  storage: string;
+  threshold: number;
+  count: number;
+  items: RankedItem[];
+};
+
+type DigestRecord = {
+  date: string;
+  markdown: string;
+  threshold: number;
+  perSourceMax: number;
+  topN: number;
+  counts: {
+    fetched: number;
+    kept: number;
+    scored: number;
+    aboveThreshold: number;
+    selected: number;
+    skippedQuota: number;
+  };
+  model: string;
+  promptVersion: string;
+};
+
+type DigestResponse = {
+  storage: string;
+  digest: DigestRecord | null;
+  list?: Array<{ date: string; selected: number; threshold: number; updatedAt: number }>;
+  message?: string;
+};
+
+type SourceDetail = {
+  id: string;
+  name: string;
+  url: string;
+  lang: string;
+  verified: boolean;
+  lastCheckedAt: number | null;
+  lastHealth: string | null;
+  lastError: string | null;
+  lastItemCount: number;
+  baselineCount: number | null;
+  consecutiveFailures: number;
+  history: Array<{
+    level: string;
+    error: string | null;
+    itemCount: number;
+    elapsedMs: number | null;
+    checkedAt: number;
+  }>;
+};
+
+type SourcesResponse = { storage: string; sources: SourceDetail[]; message?: string };
+
+type ItemsResponse = {
+  storage: string;
+  count: number;
+  items: Array<{
+    contentKey: string;
+    sourceId: string;
+    title: string;
+    link: string;
+    publishedAt: number | null;
+    summary: string;
+    firstSeenAt: number;
+    lastSeenAt: number;
+  }>;
+};
+
+type Tab = "digest" | "top" | "history" | "sources";
+
+/* ────────────────────── 工具 ────────────────────── */
+
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -71,23 +143,174 @@ function fmtTime(iso: string | null): string {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
-const LEVEL_STYLE: Record<Health["level"], string> = {
+function fmtEpoch(ms: number | null): string {
+  if (!ms) return "—";
+  return fmtTime(new Date(ms).toISOString());
+}
+
+const LEVEL_STYLE: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
   degraded: "bg-amber-500/15 text-amber-300 border-amber-500/30",
   broken: "bg-rose-500/15 text-rose-300 border-rose-500/30",
 };
 
-const LEVEL_TEXT: Record<Health["level"], string> = {
+const LEVEL_TEXT: Record<string, string> = {
   ok: "正常",
   degraded: "异常（条目骤降）",
   broken: "不可用",
 };
 
+function levelText(level: string | null): string {
+  if (!level) return "未抓取";
+  return LEVEL_TEXT[level] ?? level;
+}
+
+/* ────────────────── 轻量 Markdown 渲染 ────────────────── */
+/* 日报是我们自己生成的固定结构，语法可控 → 不引 markdown 库（省依赖、省体积、少一类 XSS 面）。
+   注意：所有文本都经过 React 转义（不用 dangerouslySetInnerHTML），链接 href 走白名单校验。 */
+
+function safeHref(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  // 依次处理 **[粗体链接](url)** 与 [链接](url)
+  const nodes: React.ReactNode[] = [];
+  const re = /(\*\*)?\[([^\]]+)\]\(([^)]+)\)(\*\*)?/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    const href = safeHref(m[3] ?? "");
+    const bold = Boolean(m[1] && m[4]);
+    const inner = m[2] ?? "";
+    nodes.push(
+      href ? (
+        <a
+          key={`${keyPrefix}-a${i}`}
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className={bold ? "font-semibold text-sky-300 hover:underline" : "text-sky-300 hover:underline"}
+        >
+          {inner}
+        </a>
+      ) : (
+        <span key={`${keyPrefix}-t${i}`} className="text-slate-400">
+          {inner}
+        </span>
+      ),
+    );
+    last = m.index + m[0].length;
+    i++;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+function renderMarkdown(md: string): React.ReactNode {
+  const lines = md.split("\n");
+  const out: React.ReactNode[] = [];
+  let list: string[] = [];
+  let inCode = false;
+
+  const flushList = (key: string) => {
+    if (list.length === 0) return;
+    out.push(
+      <ul key={key} className="my-1 list-disc space-y-1 pl-5">
+        {list.map((li, idx) => (
+          <li key={idx} className="text-sm leading-relaxed text-slate-300">
+            {renderInline(li, `${key}-${idx}`)}
+          </li>
+        ))}
+      </ul>,
+    );
+    list = [];
+  };
+
+  lines.forEach((raw, idx) => {
+    const line = raw.trimEnd();
+    const key = `l${idx}`;
+
+    if (line.startsWith("```")) {
+      flushList(`${key}-pre`);
+      inCode = !inCode;
+      return;
+    }
+    if (inCode) {
+      out.push(
+        <pre key={key} className="my-1 overflow-auto rounded bg-slate-900/80 px-2 py-1 text-xs text-slate-400">
+          {line}
+        </pre>,
+      );
+      return;
+    }
+
+    if (line.startsWith("# ")) {
+      flushList(`${key}-h1`);
+      out.push(
+        <h1 key={key} className="mb-2 text-lg font-semibold text-slate-100">
+          {renderInline(line.slice(2), key)}
+        </h1>,
+      );
+      return;
+    }
+    if (line.startsWith("## ")) {
+      flushList(`${key}-h2`);
+      out.push(
+        <h2 key={key} className="mt-4 mb-1 border-b border-slate-800 pb-1 text-sm font-semibold text-emerald-300">
+          {renderInline(line.slice(3), key)}
+        </h2>,
+      );
+      return;
+    }
+    if (line.startsWith("> ")) {
+      flushList(`${key}-q`);
+      out.push(
+        <p key={key} className="my-1 rounded border-l-2 border-amber-500/50 bg-amber-500/5 px-2 py-1 text-xs text-amber-200">
+          {renderInline(line.slice(2), key)}
+        </p>,
+      );
+      return;
+    }
+    if (line.startsWith("- ")) {
+      list.push(line.slice(2));
+      return;
+    }
+    if (line.trim() === "") {
+      flushList(`${key}-blank`);
+      return;
+    }
+    // 其它（正文行）
+    flushList(`${key}-p`);
+    out.push(
+      <p key={key} className="my-0.5 text-sm leading-relaxed text-slate-300">
+        {renderInline(line, key)}
+      </p>,
+    );
+  });
+  flushList("l-end");
+  return out;
+}
+
+/* ────────────────────── 页面 ────────────────────── */
+
 export default function IndexPage() {
   const [token, setToken] = useState("");
-  const [data, setData] = useState<FeedResponse | null>(null);
+  const [tab, setTab] = useState<Tab>("digest");
+  const [feed, setFeed] = useState<FeedResponse | null>(null);
   const [top, setTop] = useState<TopResponse | null>(null);
-  const [digest, setDigest] = useState<DigestResponse["digest"]>(null);
+  const [digest, setDigest] = useState<DigestResponse | null>(null);
+  const [digestList, setDigestList] = useState<NonNullable<DigestResponse["list"]>>([]);
+  const [digestDate, setDigestDate] = useState<string | null>(null);
+  const [items, setItems] = useState<ItemsResponse | null>(null);
+  const [sources, setSources] = useState<SourcesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,87 +319,134 @@ export default function IndexPage() {
     if (saved) setToken(saved);
   }, []);
 
-  const load = useCallback(async (tk: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/feed", {
-        headers: tk ? { authorization: `Bearer ${tk}` } : {},
-      });
-      const body = (await res.json()) as FeedResponse & { error?: string };
-      if (!res.ok) {
-        setError(body.error ?? `请求失败（HTTP ${res.status}）`);
-        setData(null);
-        return;
+  const authHeaders = useCallback(
+    (tk: string): Record<string, string> => (tk ? { authorization: `Bearer ${tk}` } : {}),
+    [],
+  );
+
+  const loadFeed = useCallback(
+    async (tk: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/feed", { headers: authHeaders(tk) });
+        const body = (await res.json()) as FeedResponse & { error?: string };
+        if (!res.ok) {
+          setError(body.error ?? `请求失败（HTTP ${res.status}）`);
+          setFeed(null);
+          return;
+        }
+        setFeed(body);
+      } catch {
+        setError("网络异常，请稍后重试。");
+        setFeed(null);
+      } finally {
+        setLoading(false);
       }
-      setData(body);
-      // 精选与日报都只读库、不触网：与抓取并行拉，互不阻塞
-      const h: Record<string, string> = tk ? { authorization: `Bearer ${tk}` } : {};
-      void fetch("/api/top?limit=12", { headers: h })
-        .then((r) => r.json() as Promise<TopResponse>)
-        .then((t) => setTop(t))
-        .catch(() => setTop(null));
-      void fetch("/api/digest", { headers: h })
+    },
+    [authHeaders],
+  );
+
+  const loadReadonly = useCallback(
+    async (tk: string) => {
+      const h = authHeaders(tk);
+      const [topRes, digestRes, itemsRes, sourcesRes] = await Promise.all([
+        fetch("/api/top?limit=30", { headers: h })
+          .then((r) => r.json() as Promise<TopResponse>)
+          .catch(() => null),
+        fetch("/api/digest", { headers: h })
+          .then((r) => r.json() as Promise<DigestResponse>)
+          .catch(() => null),
+        fetch("/api/items?limit=60", { headers: h })
+          .then((r) => r.json() as Promise<ItemsResponse>)
+          .catch(() => null),
+        fetch("/api/sources?history=20", { headers: h })
+          .then((r) => r.json() as Promise<SourcesResponse>)
+          .catch(() => null),
+      ]);
+      if (topRes) setTop(topRes);
+      if (digestRes) setDigest(digestRes);
+      if (itemsRes) setItems(itemsRes);
+      if (sourcesRes) setSources(sourcesRes);
+    },
+    [authHeaders],
+  );
+
+  const loadDigestList = useCallback(
+    async (tk: string) => {
+      const res = await fetch("/api/digest?list=1", { headers: authHeaders(tk) })
         .then((r) => r.json() as Promise<DigestResponse>)
-        .then((d) => setDigest(d.digest))
-        .catch(() => setDigest(null));
-    } catch {
-      setError("网络异常，请稍后重试。");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        .catch(() => null);
+      if (res) setDigestList(res.list ?? []);
+    },
+    [authHeaders],
+  );
 
   useEffect(() => {
-    void load(token);
-    // 首次进入自动抓一次；token 变化由按钮触发，避免每次输入都打源站
+    void loadFeed(token);
+    void loadReadonly(token);
+    void loadDigestList(token);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const saveToken = () => {
-    if (typeof localStorage !== "undefined") {
-      if (token) localStorage.setItem(TOKEN_KEY, token);
-      else localStorage.removeItem(TOKEN_KEY);
-    }
-    void load(token);
+  const refreshAll = () => {
+    void loadFeed(token);
+    void loadReadonly(token);
+    void loadDigestList(token);
   };
+
+  const openDigest = async (date: string) => {
+    const res = await fetch(`/api/digest?date=${date}`, { headers: authHeaders(token) })
+      .then((r) => r.json() as Promise<DigestResponse>)
+      .catch(() => null);
+    if (res?.digest) {
+      setDigest(res);
+      setDigestDate(date);
+    }
+  };
+
+  const tabs = useMemo(
+    () =>
+      [
+        { id: "digest" as const, label: "日报", badge: digest?.digest?.date },
+        { id: "top" as const, label: "精选", badge: top ? `${top.count}` : undefined },
+        { id: "history" as const, label: "历史", badge: items ? `${items.count}` : undefined },
+        { id: "sources" as const, label: "源健康", badge: sources ? `${sources.sources.length}` : undefined },
+      ] as Array<{ id: Tab; label: string; badge?: string }>,
+    [digest, top, items, sources],
+  );
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 text-slate-100">
-      <header className="mb-6">
+      <header className="mb-5">
         <h1 className="text-2xl font-semibold tracking-tight">AI 资讯雷达</h1>
         <p className="mt-1 text-sm text-slate-400">
-          定时聚合多源 AI 资讯 → 评分精选 → 每日日报。
-          <span className="ml-2 rounded border border-slate-600 px-1.5 py-0.5 text-xs text-slate-400">
-            增量 1：抓取 / 去重 / 源健康（评分与日报未接）
-          </span>
+          定时聚合多源 AI 资讯 → 评分精选 → 每日日报。阈值由评测集标定，源健康全程可见。
         </p>
       </header>
 
+      {/* 控制条 */}
       <section className="mb-5 flex flex-wrap items-center gap-2">
         <input
           type="password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder="访问令牌（未配置 ACCESS_TOKEN 可留空）"
-          className="min-w-[16rem] flex-1 rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm"
+          className="min-w-[15rem] flex-1 rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm"
         />
         <button
           type="button"
-          onClick={saveToken}
-          className="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600"
-        >
-          保存并刷新
-        </button>
-        <button
-          type="button"
-          onClick={() => void load(token)}
+          onClick={refreshAll}
           disabled={loading}
           className="rounded bg-indigo-600 px-3 py-1.5 text-sm hover:bg-indigo-500 disabled:opacity-50"
         >
-          {loading ? "抓取中…" : "重新抓取"}
+          {loading ? "抓取中…" : "刷新"}
         </button>
+        <span className="text-xs text-slate-500">
+          {feed
+            ? `上次抓取 ${fmtTime(feed.fetchedAt)} · ${feed.counts.fetched} 条 / 去重后 ${feed.counts.kept} · ${feed.elapsedMs}ms`
+            : "尚未抓取"}
+        </span>
       </section>
 
       {error && (
@@ -185,167 +455,221 @@ export default function IndexPage() {
         </p>
       )}
 
-      {data && (
-        <>
-          <section className="mb-4 rounded border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
-            抓取于 {fmtTime(data.fetchedAt)} · 耗时 {data.elapsedMs}ms ·
-            源 {data.budget.sources} 个（单源上限 {data.budget.maxItemsPerSource} 条 / 超时{" "}
-            {data.budget.timeoutMs}ms）· 抓到 {data.counts.fetched} 条 · 去重后{" "}
-            {data.counts.kept} 条（重复 {data.counts.deduped}）
-          </section>
+      {/* 页签 */}
+      <nav className="mb-5 flex gap-1 border-b border-slate-800">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`rounded-t px-3 py-1.5 text-sm transition ${
+              tab === t.id
+                ? "border-b-2 border-emerald-400 text-emerald-300"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {t.label}
+            {t.badge ? <span className="ml-1 text-xs text-slate-500">{t.badge}</span> : null}
+          </button>
+        ))}
+      </nav>
 
-          <section className="mb-6">
-            <h2 className="mb-2 text-sm font-medium text-slate-300">订阅源健康</h2>
-            <ul className="grid gap-1.5 sm:grid-cols-2">
-              {data.sources.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between gap-2 rounded border border-slate-700/70 bg-slate-900/40 px-3 py-2"
+      {/* ── 日报 ── */}
+      {tab === "digest" && (
+        <section>
+          {digestList.length > 0 && (
+            <div className="mb-4 flex flex-wrap gap-1.5">
+              {digestList.map((d) => (
+                <button
+                  key={d.date}
+                  type="button"
+                  onClick={() => void openDigest(d.date)}
+                  className={`rounded border px-2 py-0.5 text-xs ${
+                    digestDate === d.date
+                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                      : "border-slate-700 text-slate-400 hover:border-slate-500"
+                  }`}
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-sm">{s.name}</span>
-                      <span className="rounded border border-slate-600 px-1 text-[10px] uppercase text-slate-400">
-                        {s.lang}
-                      </span>
-                      {!s.verified && (
-                        <span className="rounded border border-amber-600/40 bg-amber-500/10 px-1 text-[10px] text-amber-300">
-                          待 M0 实测
-                        </span>
-                      )}
+                  {d.date}（{d.selected} 条）
+                </button>
+              ))}
+            </div>
+          )}
+          {digest?.digest ? (
+            <article className="rounded border border-slate-800 bg-slate-900/30 px-4 py-3">
+              {renderMarkdown(digest.digest.markdown)}
+            </article>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {digest?.message ?? "还没有生成过日报（每天 00:30 UTC 自动生成）。"}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* ── 精选 ── */}
+      {tab === "top" && (
+        <section>
+          {top && (
+            <p className="mb-3 text-xs text-slate-500">
+              阈值 <span className="text-amber-300">{top.threshold}</span>（评测集标定：Precision 100% / Recall
+              77.3%）· 四维加权：相关性 0.4 / 新颖性 0.2 / 实用度 0.2 / 权威度 0.2 · 理由可核验，不黑盒
+            </p>
+          )}
+          {top && top.items.length > 0 ? (
+            <ul className="space-y-2">
+              {top.items.map((item) => (
+                <li
+                  key={item.contentKey}
+                  className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-mono text-amber-200">
+                      {item.total}
+                    </span>
+                    <div className="min-w-0">
+                      <a
+                        href={item.link}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-sm text-sky-300 hover:underline"
+                      >
+                        {item.title}
+                      </a>
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        {item.sourceId}
+                        {item.publishedAt ? ` · ${fmtEpoch(item.publishedAt)}` : ""}
+                        {item.reason ? ` · ${item.reason}` : ""}
+                      </p>
                     </div>
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="block truncate text-xs text-slate-500 hover:text-slate-300"
-                    >
-                      {s.url}
-                    </a>
                   </div>
-                  <span
-                    className={`shrink-0 rounded border px-2 py-0.5 text-xs ${LEVEL_STYLE[s.health.level]}`}
-                  >
-                    {LEVEL_TEXT[s.health.level]} · {s.health.itemCount}
-                  </span>
                 </li>
               ))}
             </ul>
-          </section>
-
-          {data.failures.length > 0 && (
-            <section className="mb-6">
-              <h2 className="mb-2 text-sm font-medium text-rose-300">
-                失败明细（{data.failures.length}）
-              </h2>
-              <ul className="space-y-1 text-xs text-slate-400">
-                {data.failures.map((f) => (
-                  <li key={f.sourceId} className="rounded bg-slate-900/40 px-3 py-1.5">
-                    <span className="text-slate-300">{f.sourceId}</span>
-                    <span className="mx-1 text-slate-500">·</span>
-                    <span className="font-mono text-rose-300">{f.error}</span>
-                    {f.status ? <span className="ml-1 text-slate-500">HTTP {f.status}</span> : null}
-                    <span className="ml-2">{f.message}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
+          ) : (
+            <p className="text-sm text-slate-500">还没有达到阈值的条目（评分队列可能仍在跑）。</p>
           )}
+        </section>
+      )}
 
-          {digest && (
-            <section className="mb-6">
-              <h2 className="mb-1 text-sm font-medium text-emerald-300">
-                日报 · {digest.date}
-                <span className="ml-2 text-xs font-normal text-slate-500">
-                  阈值 {digest.threshold} · 入选 {digest.counts.selected} 条
-                  {digest.counts.skippedQuota > 0 ? ` · 单源配额让位 ${digest.counts.skippedQuota} 条` : ""}
-                </span>
-              </h2>
-              <details className="rounded border border-emerald-500/25 bg-slate-900/50 px-3 py-2">
-                <summary className="cursor-pointer text-xs text-slate-400">
-                  展开全文（每天 00:30 UTC 自动生成 · 手动刷新走 POST /api/digest）
-                </summary>
-                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-300">
-                  {digest.markdown}
-                </pre>
-              </details>
-            </section>
-          )}
-
-          {top && top.items.length > 0 && (
-            <section className="mb-6">
-              <h2 className="mb-1 text-sm font-medium text-amber-300">
-                精选（阈值 {top.threshold} · {top.count} 条）
-              </h2>
-              <p className="mb-2 text-xs text-slate-500">
-                分数由 AI 按「相关性 / 新颖性 / 实用度 / 权威度」四维加权，阈值经评测集标定
-                （Precision 100% / Recall 77.3%，见 eval/report.md）。理由可核验，不黑盒。
-              </p>
-              <ul className="space-y-2">
-                {top.items.map((item) => (
-                  <li
-                    key={item.contentKey}
-                    className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+      {/* ── 历史 ── */}
+      {tab === "history" && (
+        <section>
+          <p className="mb-3 text-xs text-slate-500">
+            已入库条目（跨请求去重后）· 按发布时间倒序 · 只读库、不触网
+          </p>
+          {items && items.items.length > 0 ? (
+            <ul className="space-y-1.5">
+              {items.items.map((item) => (
+                <li key={item.contentKey} className="rounded border border-slate-800 bg-slate-900/30 px-3 py-2">
+                  <a
+                    href={item.link}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-sm text-sky-300 hover:underline"
                   >
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-mono text-amber-200">
-                        {item.total}
-                      </span>
-                      <div className="min-w-0">
-                        <a
-                          href={item.link}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="text-sm text-sky-300 hover:underline"
-                        >
-                          {item.title}
-                        </a>
-                        <p className="mt-0.5 text-xs text-slate-400">
-                          {item.sourceId}
-                          {item.publishedAt ? ` · ${fmtTime(new Date(item.publishedAt).toISOString())}` : ""}
-                          {item.reason ? ` · ${item.reason}` : ""}
-                        </p>
+                    {item.title}
+                  </a>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {item.sourceId} · 发布 {fmtEpoch(item.publishedAt)} · 首见{" "}
+                    {fmtEpoch(item.firstSeenAt)} · 最近见 {fmtEpoch(item.lastSeenAt)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">库里还没有条目。</p>
+          )}
+        </section>
+      )}
+
+      {/* ── 源健康 ── */}
+      {tab === "sources" && (
+        <section>
+          <p className="mb-3 text-xs text-slate-500">
+            订阅源状态与历史（feed 失效是常态，因此保留历史以便判断「该重试还是该换源」）
+          </p>
+          {sources && sources.sources.length > 0 ? (
+            <ul className="space-y-2">
+              {sources.sources.map((s) => (
+                <li key={s.id} className="rounded border border-slate-800 bg-slate-900/30 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-sm">{s.name}</span>
+                        <span className="rounded border border-slate-600 px-1 text-[10px] uppercase text-slate-400">
+                          {s.lang}
+                        </span>
+                        {!s.verified && (
+                          <span className="rounded border border-amber-600/40 bg-amber-500/10 px-1 text-[10px] text-amber-300">
+                            待 M0 实测
+                          </span>
+                        )}
+                        {s.consecutiveFailures > 1 && (
+                          <span className="rounded border border-rose-600/40 bg-rose-500/10 px-1 text-[10px] text-rose-300">
+                            连续失败 {s.consecutiveFailures} 次
+                          </span>
+                        )}
                       </div>
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="block truncate text-xs text-slate-500 hover:text-slate-300"
+                      >
+                        {s.url}
+                      </a>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        最近检查 {fmtEpoch(s.lastCheckedAt)} · 条目 {s.lastItemCount}
+                        {s.baselineCount ? ` / 基线 ${s.baselineCount}` : ""}
+                        {s.lastError ? ` · 错误 ${s.lastError}` : ""}
+                      </p>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section>
-            <h2 className="mb-2 text-sm font-medium text-slate-300">
-              最新条目（{data.items.length}）
-            </h2>
-            {data.items.length === 0 ? (
-              <p className="text-sm text-slate-500">没有抓到条目。</p>
-            ) : (
-              <ul className="space-y-2">
-                {data.items.map((item) => (
-                  <li
-                    key={`${item.sourceId}:${item.id}`}
-                    className="rounded border border-slate-700/70 bg-slate-900/40 px-3 py-2"
-                  >
-                    <a
-                      href={item.link}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="text-sm text-sky-300 hover:underline"
+                    <span
+                      className={`shrink-0 rounded border px-2 py-0.5 text-xs ${
+                        LEVEL_STYLE[s.lastHealth ?? ""] ?? LEVEL_STYLE.ok
+                      }`}
                     >
-                      {item.title}
-                    </a>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {item.sourceId} · {fmtTime(item.publishedAt)}
-                    </p>
-                    {item.summary && (
-                      <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.summary}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </>
+                      {levelText(s.lastHealth)}
+                    </span>
+                  </div>
+
+                  {s.history.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-slate-500">
+                        抓取历史（最近 {s.history.length} 次）
+                      </summary>
+                      <ul className="mt-1 space-y-0.5">
+                        {s.history.map((h, i) => (
+                          <li key={i} className="flex items-center gap-2 text-xs text-slate-500">
+                            <span
+                              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                                h.level === "ok"
+                                  ? "bg-emerald-400"
+                                  : h.level === "degraded"
+                                    ? "bg-amber-400"
+                                    : "bg-rose-400"
+                              }`}
+                            />
+                            <span className="w-40 shrink-0">{fmtEpoch(h.checkedAt)}</span>
+                            <span className="w-16 shrink-0">{levelText(h.level)}</span>
+                            <span className="w-20 shrink-0">条目 {h.itemCount}</span>
+                            {h.elapsedMs != null && <span className="w-20 shrink-0">{h.elapsedMs}ms</span>}
+                            {h.error && <span className="font-mono text-rose-300">{h.error}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {sources?.message ?? "还没有源状态（先点刷新抓一次）。"}
+            </p>
+          )}
+        </section>
       )}
     </main>
   );
