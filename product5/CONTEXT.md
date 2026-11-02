@@ -12,10 +12,12 @@
 | 1 需求对齐 | ✅（多轮 grill + 用户纠偏，详见 §3 演进） | §3 决策记录 D1–D10 + §4 验收标准 A1–A9 |
 | 2 沉淀 Spec | ✅（2026-11-02 第三版定稿：RSS 多源） | 本文档 |
 | 3 拆增量 | ✅（草案） | §8 增量清单（6 个，M0 在增量 1） |
-| 3.5 方案复核 | ✅（2026-11-02 授权「开始实现」） | §9 五行模板；复核报告 `docs/方案复核-2026-11-02.md` |
+| 3.5 方案复核 | ✅（2026-11-02 授权「开始实现」） | §9 五行模板；复核报告 `product5/docs/方案复核-2026-11-02.md` |
 | 4 实现 · 增量 1 | ✅ **完成**（M0 真环境 6/6 源通过，180 条真实数据） | 骨架 + `lib/rss.ts` + `/api/feed` + 首页；30 单测 + 11 E2E 过；已部署 `c5dc0553` |
-| 4 实现 · 增量 2 | ⏳ 下一步：D1 存储层 + 持久化去重 + 源健康历史 | — |
-| 4 实现 · 增量 3~6 | ⏳ 评分评测 / Cron+日报 / UI 完善 / 部署收口 | — |
+| 4 实现 · 增量 2 | ✅ **完成**（线上连打两次：180 新增 → 180 判重） | `db/migrations/0001` + `lib/store.ts` + `/api/items`；43 单测 + 15 E2E 过；线上 `14e8e4b5` |
+| 4 实现 · 增量 3 | ✅ **完成**（真 magpie 评分 60 条零失败；阈值标定 70 → P 100% / R 77.3%） | `lib/score.ts` + `lib/llm.ts` + `/api/score` + `/api/top` + `eval/`（50 条标签 + 标定报告）；69 单测 + 15 E2E 过 |
+| 4 实现 · 增量 4 | ⏳ 下一步：Cron 定时抓取+评分+日报生成 | — |
+| 4 实现 · 增量 5~6 | ⏳ UI 完善（历史/源健康详情）/ 部署收口 | — |
 | 5~7 审查/E2E/验收 | ⏳ | — |
 
 ## 作品集定位（能力增量轴）
@@ -47,7 +49,7 @@
 - D1 落库。
 
 **Out（明确不做）**
-- **抓取 x.com / Twitter**：经三轮调研被证伪（session 墙 / 免费 API 无 search / 付费 API 被否）——见 §3 D2 演进与 `docs/方案复核-2026-11-02.md`。
+- **抓取 x.com / Twitter**：经三轮调研被证伪（session 墙 / 免费 API 无 search / 付费 API 被否）——见 §3 D2 演进与 `product5/docs/方案复核-2026-11-02.md`。
 - **任意网页 HTML 爬取**：无契约、脆弱；RSS 之外不开放（与②「粘贴文本兜底」同理，明确边界）。
 - 付费 API（官方 X / twitterapi.io / xclaw 等）、ego 浏览器、登录态 cookie（H 方案）—— 均被用户否决或无需。
 - 多租户 / 权限 / 商业化；自主多步 Agent；向量检索；一期推送（Webhook/邮件，留二期）。
@@ -58,7 +60,7 @@
 - **D2 数据源（演进，四轮）**：
   - ① 用户原要求 `x.com/home` → 三道硬墙（登录态 / Workers 无浏览器内核 / API $200 月）否决。
   - ② X 公开源 + 第三方付费 API（twitterapi.io）→ 用户坚持零成本，否决。
-  - ③ X 免费接口（guest/syndication/fxtwitter）→ **实测证伪**：XActions/x-cli 文档证明 search/home 属 session 层（零登录拿不到）；fxtwitter 实测 `/2/search` 返回 404 空、无 timeline 端点（`docs/方案复核-2026-11-02.md` 附录三）；xclaw.info 拆解证明其为商业服务（SSR 内嵌数据 + 30 分钟管线 + 付费 API），非零登录样板。
+  - ③ X 免费接口（guest/syndication/fxtwitter）→ **实测证伪**：XActions/x-cli 文档证明 search/home 属 session 层（零登录拿不到）；fxtwitter 实测 `/2/search` 返回 404 空、无 timeline 端点（`product5/docs/方案复核-2026-11-02.md` 附录三）；xclaw.info 拆解证明其为商业服务（SSR 内嵌数据 + 30 分钟管线 + 付费 API），非零登录样板。
   - ④ **定稿（2026-11-02，用户拍板「改」）**：**多源 RSS/Atom**。X 三道墙 RSS 一条都不撞；AI 领域 RSS 源现成且高质量；「自动扫描」在 RSS 上真正可落地。
 - **D3 技术选型（定稿）**：Void + React SSR + Hono 文件路由 + Cloudflare Workers + D1 + magpie LLM 网关 + **RSS/Atom 解析**（不引第三方抓取服务）；Cron Trigger 定时。**不引入** Vectorize / 付费 API / ego / 登录 cookie。
 - **D4 默认源列表（中英混合，用户未另行指定）**：HackerNews、OpenAI / Anthropic / Google DeepMind / HuggingFace 官博、arXiv cs.AI、Simon Willison、IT之家、少数派。**约束：每个 feed 必须 M0 实测可用才进列表**（feed URL 不凭记忆硬编码，失效源可配置替换）。
@@ -67,6 +69,9 @@
 - **D7 一期交付**：纯网页，推送留二期。
 - **D8 存储与频率**：D1 落库（sources/items/scores/daily）；Cron 频率默认 **每 1–2 小时抓取 + 每日 1 次生成日报**（受 Free 套餐与 feed 礼貌间隔约束，可配）。
 - **D9 零成本约束**：不引入付费服务、不引入独立运行时；Workers Free 的 **CPU 10ms / subrequest 50** 为硬预算（A9 护栏）。
+- **D11 精选多样性配额（新增，2026-11-02 线上实测触发）**：实测 top5 全为 `arxiv-cs-ai`（该源日更 40 篇、权威度天然高），
+  单一源会垄断精选。固定规则：**同一源最多占精选的 1/3**（`topN=12 → 每源上限 4`），
+  溢出名额顺延给次高分条目；日报同理。实现落 `lib/digest.ts` + `selectTop` 的 quota 参数（增量 4）。
 - **D10 源健康与降级（新增）**：feed 失效是常态而非异常——按「HTTP 非 200 / 解析失败 / 条目数骤降」三级登记源状态并在 UI 可见；单源失败不影响其它源（降级不放大）；错误文案面向用户（沿用③ 401 与失败分开的教训）。
 
 ## 4. 验收标准（写死）
@@ -93,7 +98,7 @@
 ## 6. 假设与待确认
 
 **已验证**
-- X 数据获取的墙（session 层 / 免费 API 无 search / CF 拦截实证）——`docs/方案复核-2026-11-02.md` B1–B3 + 附录一~三，逐条实测。
+- X 数据获取的墙（session 层 / 免费 API 无 search / CF 拦截实证）——`product5/docs/方案复核-2026-11-02.md` B1–B3 + 附录一~三，逐条实测。
 - Workers 无浏览器内核（HTML SPA 抓不到）；**RSS 是结构化契约，不受此限**。
 - Workers Free 限额：CPU 10ms（含 Cron）、subrequest 50/次、Cron 5 个/账号、requests 10 万/天（官方 Limits 2026-10-29 版）。
 
@@ -103,10 +108,10 @@
 - D1 免费日额度、D1 是否计入 subrequest —— 实现前查官方文档核实。
 
 **待确认（需人工回答）**
-- [x] M0 真机验证 → 已通过代理通道完成（`docs/deploy-ai-hot-radar.md` §2）：6/6 源 200、180 条真实数据、无失败
+- [x] M0 真机验证 → 已通过代理通道完成（`product5/docs/deploy-ai-hot-radar.md` §2）：6/6 源 200、180 条真实数据、无失败
 - [x] 源列表范围：6 源全部实测可用（hn/hf-blog/arxiv/simonw/ithome/sspai），`verified` 已回填
 - [ ] Cron 频率确认（默认每 1–2 小时抓取 + 每日日报；增量 4 配置时定）（负责人：用户）
-- [ ] 评测集标注（≥50 条「该进/不该进」）（负责人：用户；增量 3 先出标注表格）
+- [ ] 评测集**复核**：50 条标签为 agent 初标（`product5/eval/labels.json`），请复核并修正误标；改后重跑 `npm run eval` 即更新阈值（负责人：用户）
 - [ ] A9 的 CPU 直接读数（dashboard/observability；subrequest 与墙钟已实测）（负责人：下个会话）
 
 ## 7. 影响面
@@ -142,7 +147,8 @@
 
 ## 10. 调研记录
 
-完整调研与复核证据链见 `docs/方案复核-2026-11-02.md`（B1–B3 阻塞、附录一 xclaw 拆解、附录二 零成本三选 F/G/H、附录三 fxtwitter 实测矩阵）。要点：
+完整调研与复核证据链见 `product5/docs/方案复核-2026-11-02.md`（B1–B3 阻塞、附录一 xclaw 拆解、附录二 零成本三选 F/G/H、附录三 fxtwitter 实测矩阵）。要点：
+
 
 - X 路线证伪：零登录拿不到热门/搜索（session 层）；fxtwitter 实测无 search/时间线；直连 api.x.com 有 CF 拦截实证。
 - `xclaw.info` 为商业服务（SSR 内嵌数据 + 30 分钟管线 + 需鉴权 API + 同名产品订阅），非零登录样板。

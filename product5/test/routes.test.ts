@@ -1,6 +1,7 @@
 /** 路由层契约测试：/api/feed 的令牌、源筛选、失败隔离、去重计数、limit */
 import { assert, assertEqual, describe, it } from "./harness.ts";
 import * as feedRoute from "../routes/api/feed.ts";
+import { createMemoryStore, type Store } from "../lib/store.ts";
 
 const TOKEN = "secret-token";
 
@@ -12,11 +13,13 @@ function ctx(opts: {
   auth?: string | null;
   fetchImpl?: typeof fetch;
   env?: Record<string, unknown>;
+  store?: Store;
 }): unknown {
   const url = new URL(opts.url, "https://example.com");
   return {
     env: { ...(opts.env ?? {}) },
     _fetchImpl: opts.fetchImpl,
+    _store: opts.store,
     req: {
       url,
       method: "GET",
@@ -153,5 +156,57 @@ describe("/api/feed · 失败隔离与计数", () => {
     const body = (await res.json()) as { items: unknown[]; counts: { kept: number } };
     assertEqual(body.items.length, 3);
     assertEqual(body.counts.kept, 8);
+  });
+});
+describe("/api/feed · 持久化（增量 2）", () => {
+  const oneItem = rss([{ title: "落库条目", link: "https://a.com/1" }]);
+  const fetchImpl = mockFetch({ "hnrss.org": () => new Response(oneItem) });
+
+  it("未提供存储时显式降级（storage=disabled），不报错", async () => {
+    const res = await GET(ctx({ url: "/api/feed?src=hn", fetchImpl }));
+    assertEqual(res.status, 200);
+    const body = (await res.json()) as { storage: string; persisted: unknown };
+    assertEqual(body.storage, "disabled");
+    assertEqual(body.persisted, null);
+  });
+
+  it("有存储时两次调用：首次新增、第二次全判重", async () => {
+    const store = createMemoryStore();
+
+    const first = await GET(ctx({ url: "/api/feed?src=hn", fetchImpl, store }));
+    const b1 = (await first.json()) as { storage: string; persisted: { inserted: number; duplicates: number } };
+    assertEqual(b1.storage, "ok");
+    assertEqual(b1.persisted.inserted, 1);
+    assertEqual(b1.persisted.duplicates, 0);
+
+    const second = await GET(ctx({ url: "/api/feed?src=hn", fetchImpl, store }));
+    const b2 = (await second.json()) as { persisted: { inserted: number; duplicates: number } };
+    assertEqual(b2.persisted.inserted, 0, "跨请求去重应生效");
+    assertEqual(b2.persisted.duplicates, 1);
+    assertEqual(store._size().items, 1);
+  });
+
+  it("落库失败不拖垮抓取：仍 200，storage=failed + 面向用户文案", async () => {
+    const broken = {
+      ...createMemoryStore(),
+      async saveItems(): Promise<never> {
+        throw new Error("D1_ERROR: no such table: items");
+      },
+    } as ReturnType<typeof createMemoryStore>;
+
+    const res = await GET(ctx({ url: "/api/feed?src=hn", fetchImpl, store: broken }));
+    assertEqual(res.status, 200, "抓取结果对用户仍有用，不应 500");
+    const body = (await res.json()) as {
+      storage: string;
+      persisted: unknown;
+      persistError: string | null;
+      items: unknown[];
+    };
+    assertEqual(body.storage, "failed");
+    assertEqual(body.persisted, null);
+    assert(Boolean(body.persistError), "应给出可读的降级说明");
+    assert(body.persistError?.includes("存储") === true);
+    assert(!String(body.persistError).includes("D1_ERROR"), "不应泄露底层错误体");
+    assertEqual(body.items.length, 1, "条目本身照常返回");
   });
 });

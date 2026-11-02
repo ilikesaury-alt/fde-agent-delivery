@@ -12,6 +12,14 @@ export default defineConfig({
   cloudflare: {
     account_id: "e279d1f8bcb29c72945905179e57faeb",
     name: "ai-hot-radar",
+    d1_databases: [
+      {
+        binding: "DB",
+        database_name: "ai-hot-radar-db",
+        database_id: "1e53e023-38f4-4afe-bc92-ade98e4b5a93",
+        migrations_dir: "db/migrations",
+      },
+    ],
   },
   head: {
     titleTemplate: "%s",

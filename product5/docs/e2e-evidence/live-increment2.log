@@ -1,0 +1,11 @@
+=== 增量 2 线上证据（2026-11-02，经代理 127.0.0.1:7890，版本 14e8e4b5）===
+
+第 1 次 /api/feed：storage=ok persisted={"inserted":0,"duplicates":180} counts={"fetched":180,"kept":180,"deduped":0}
+第 2 次 /api/feed：storage=ok persisted={"inserted":0,"duplicates":180} counts={"fetched":180,"kept":180,"deduped":0}
+
+--- /api/items（只读库，不触网）---
+storage=ok count=3
+ · ithome | 批量劝退应届生的车灯公司星宇股份 2026 年第三季度归母净利润 2.62 亿元，同比下降 39 | firstSeen=2026-11-02T08:50:07.612Z
+ · ithome | 微信鸿蒙版 App 获 8.0.23.33 正式版更新，打开图片延时问题解决、灰度开放合并发图等 | firstSeen=2026-11-02T08:50:07.612Z
+ · ithome | 土耳其就谷歌搜索 AI 功能发起调查并实施临时监管举措 | firstSeen=2026-11-02T08:50:07.612Z
+源快照: hn:ok/20/base=20 | hf-blog:ok/40/base=40 | arxiv-cs-ai:ok/40/base=40 | simonw:ok/30/base=30 | ithome:ok/40/base=40 | sspai:ok/10/base=10

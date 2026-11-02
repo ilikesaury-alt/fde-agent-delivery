@@ -7,9 +7,12 @@
  *
  * 覆盖的验收标准：
  *   A1 抓取解析闭环（用**真实 HN feed**，含 CDATA/HTML 描述/dc:creator/guid 等真实怪癖）
- *   A2 跨源去重（夹具里刻意放一条与 HN 同链接的 Atom 条目）
+ *   A2 跨源去重（夹具里刻意放一条与 HN 同链接的 Atom 条目）+ **跨请求去重**（D1 替身）
  *   A5 首页 SSR 可渲染（1101 类问题的本地探测器）
  *   A6 失败隔离（不可达源分类记录，整体仍 200）
+ *
+ * D1 用 `node:sqlite` 替身（e2e/d1-shim.mjs）跑**同一套迁移 SQL** —— 所以这里验证的是
+ * 真 SQL 语义（唯一约束 / ON CONFLICT / MAX 基线），不是内存 Map 的近似。
  *
  * 未覆盖：真环境出网（M0，见 docs/deploy-ai-hot-radar.md §3，需人工执行）
  *
@@ -18,9 +21,11 @@
  */
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { createD1Shim } from "./d1-shim.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const clientDir = join(root, "dist", "client");
@@ -70,10 +75,20 @@ const { default: WorkerClass } = await import(
   pathToFileURL(join(root, "dist", "ssr", "index.js")).href
 );
 
+/** 建一个已应用全部迁移的内存 D1（与线上同一批 SQL 文件，不是手写 schema） */
+async function createMigratedD1() {
+  const db = createD1Shim(":memory:");
+  const dir = join(root, "db", "migrations");
+  const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  for (const f of files) db.exec(await readFile(join(dir, f), "utf8"));
+  return db;
+}
+
 const workerEnv = {
   MAGPIE_BASE_URL: "https://placeholder.invalid/v1",
   MAGPIE_API_KEY: "placeholder",
   MAGPIE_MODEL: "deepseek-chat",
+  DB: await createMigratedD1(),
   ASSETS: {
     async fetch(req) {
       const u = new URL(req.url);
@@ -219,6 +234,40 @@ check(
   "A6 好源仍为 ok（失败未放大）",
   levels.includes("hn:ok") && levels.includes("hf-blog:ok"),
   levels.join(" | "),
+);
+
+// A2（增量 2）：跨请求持久化去重 —— 真 SQL 语义（唯一约束 / ON CONFLICT）
+const stored1 = await getJson("/api/items?limit=10");
+check(
+  "A2 落库：/api/items 能读到之前抓到的条目（不触网）",
+  stored1.body?.storage === "ok" && (stored1.body?.count ?? 0) >= 4,
+  `storage=${stored1.body?.storage} count=${stored1.body?.count}`,
+);
+
+const rerun1 = await getJson("/api/feed?src=hn,hf-blog&limit=20");
+const rerun2 = await getJson("/api/feed?src=hn,hf-blog&limit=20");
+check(
+  "A2 跨请求去重：重复抓取不新增（inserted=0）",
+  rerun1.status === 200 && rerun2.body?.persisted?.inserted === 0,
+  `第一次=${JSON.stringify(rerun1.body?.persisted)} 第二次=${JSON.stringify(rerun2.body?.persisted)}`,
+);
+
+const stored2 = await getJson("/api/items?limit=10");
+check(
+  "A2 条目总数不因重复抓取而增长",
+  stored2.body?.count === stored1.body?.count,
+  `${stored1.body?.count} → ${stored2.body?.count}`,
+);
+const snap = stored2.body?.sources ?? [];
+const okSnap = snap.filter((s) => s.lastHealth === "ok");
+const badSnap = snap.filter((s) => s.lastHealth !== "ok");
+check(
+  "D10 源健康快照：正常源建立 baseline，坏源不伪造 baseline",
+  snap.length > 0 &&
+    okSnap.length > 0 &&
+    okSnap.every((s) => (s.baselineCount ?? 0) > 0) &&
+    badSnap.every((s) => s.lastError !== null && s.baselineCount === null),
+  JSON.stringify(snap.map((s) => `${s.sourceId}:${s.lastHealth}/base=${s.baselineCount}`)),
 );
 
 // A5：首页 SSR（1101 类问题的本地探测器）

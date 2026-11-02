@@ -1,0 +1,20 @@
+=== 增量 3 线上证据（2026-11-02T09:21:01Z 经代理）===
+
+--- 评分批次（真实 magpie，60 条 0 失败）---
+6 批 × 10 条：scored=10 failed=0 每批 28–41s
+
+--- /api/top?threshold=70（精选）---
+threshold=70 count=8
+  92 | arxiv-cs-ai  | Beyond Plausible Prediction: Safety Sufficiency in | 新论文评估网页世界模型安全性
+  92 | arxiv-cs-ai  | P-ContextBench: From Personal Fact Recall to Perso | 新基准评估个性化智能体
+  90 | arxiv-cs-ai  | Agentic World Modeling for Agent Test-time Scaling | 新论文，提出免环境复制的智能体扩展
+  90 | arxiv-cs-ai  | The First Few Tokens Matter: Understanding Chain-o | 新论文揭示CoT可控性机制
+  90 | arxiv-cs-ai  | Benchmarking Forecasting Agents on Yesterday's Tom | 新论文提出预测智能体评测基准
+  90 | arxiv-cs-ai  | Nedimo: An Evidence-Grounded Multilingual Pipeline | 新论文，兼具多语生成与睡眠证据
+  88 | hn           | China's First Frontier AI Export Controls: Mofcom  | 中国首次前沿AI出口管制解读
+  88 | arxiv-cs-ai  | More Rules, Longer Lists? Benchmarking Self-Evolvi | 新型代理学习基准，具评测价值
+
+--- 分数分布（全量 60 条）---
+n=60 min=18 p50=64 max=92
+按源: {"arxiv-cs-ai":16,"hn":3,"ithome":40,"sspai":1}
+top5 来源: ["arxiv-cs-ai","arxiv-cs-ai","arxiv-cs-ai","arxiv-cs-ai","arxiv-cs-ai"] ← 单一源垄断问题，增量 4 用多样性配额解决

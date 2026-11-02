@@ -1,7 +1,7 @@
 /**
- * 首页 — AI 资讯雷达（增量 1：抓取 + 去重 + 源健康）
+ * 首页 — AI 资讯雷达（增量 3：抓取 + 去重 + 源健康 + **精选**）
  *
- * 本增量只做「能不能抓到、抓多少、各源健不健康」，评分/日报在增量 3/4 接。
+ * 评分/日报在增量 3/4 接；本页已展示「精选」与每条评分理由（可核验，不黑盒）。
  * 设计纪律：
  *  - **不掩盖失败**：坏源显式列出（名称 + 错误分类 + 面向用户文案），不静默吞掉
  *  - **不假装已验证**：源标注「待 M0 实测」的徽标，确认后才可信（CONTEXT D4）
@@ -28,6 +28,19 @@ type FeedItem = {
   publishedAt: string | null;
   summary: string;
 };
+
+type RankedItem = {
+  contentKey: string;
+  sourceId: string;
+  title: string;
+  link: string;
+  publishedAt: number | null;
+  summary: string;
+  total: number;
+  reason: string;
+};
+
+type TopResponse = { storage: string; threshold: number; count: number; items: RankedItem[] };
 
 type FeedResponse = {
   fetchedAt: string;
@@ -68,6 +81,7 @@ const LEVEL_TEXT: Record<Health["level"], string> = {
 export default function IndexPage() {
   const [token, setToken] = useState("");
   const [data, setData] = useState<FeedResponse | null>(null);
+  const [top, setTop] = useState<TopResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,6 +104,11 @@ export default function IndexPage() {
         return;
       }
       setData(body);
+      // 精选只读库、不触网：与抓取并行拉，互不阻塞
+      void fetch("/api/top?limit=12", { headers: tk ? { authorization: `Bearer ${tk}` } : {} })
+        .then((r) => r.json() as Promise<TopResponse>)
+        .then((t) => setTop(t))
+        .catch(() => setTop(null));
     } catch {
       setError("网络异常，请稍后重试。");
       setData(null);
@@ -216,6 +235,47 @@ export default function IndexPage() {
                     <span className="font-mono text-rose-300">{f.error}</span>
                     {f.status ? <span className="ml-1 text-slate-500">HTTP {f.status}</span> : null}
                     <span className="ml-2">{f.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {top && top.items.length > 0 && (
+            <section className="mb-6">
+              <h2 className="mb-1 text-sm font-medium text-amber-300">
+                精选（阈值 {top.threshold} · {top.count} 条）
+              </h2>
+              <p className="mb-2 text-xs text-slate-500">
+                分数由 AI 按「相关性 / 新颖性 / 实用度 / 权威度」四维加权，阈值经评测集标定
+                （Precision 100% / Recall 77.3%，见 eval/report.md）。理由可核验，不黑盒。
+              </p>
+              <ul className="space-y-2">
+                {top.items.map((item) => (
+                  <li
+                    key={item.contentKey}
+                    className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="mt-0.5 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-mono text-amber-200">
+                        {item.total}
+                      </span>
+                      <div className="min-w-0">
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-sm text-sky-300 hover:underline"
+                        >
+                          {item.title}
+                        </a>
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          {item.sourceId}
+                          {item.publishedAt ? ` · ${fmtTime(new Date(item.publishedAt).toISOString())}` : ""}
+                          {item.reason ? ` · ${item.reason}` : ""}
+                        </p>
+                      </div>
+                    </div>
                   </li>
                 ))}
               </ul>

@@ -3,6 +3,7 @@
  * 与产品②③④ 同口径（独立副本）。
  */
 import { checkAccessToken } from "./auth.ts";
+import { createD1Store, type D1Like, type Store } from "./store.ts";
 
 export type RadarEnv = {
   MAGPIE_BASE_URL?: string;
@@ -17,6 +18,8 @@ export type RouteCtx = {
   env?: Record<string, unknown>;
   /** 测试注入口：替换 fetch（抓取/LLM） */
   _fetchImpl?: typeof fetch;
+  /** 测试注入口：替换存储 */
+  _store?: Store;
 };
 
 function asString(v: unknown): string | undefined {
@@ -37,6 +40,18 @@ export function resolveEnv(c: unknown): RadarEnv {
 
 export function resolveFetchImpl(c: unknown): typeof fetch | undefined {
   return (c as RouteCtx)._fetchImpl;
+}
+
+/**
+ * 解析存储层：优先测试注入 → 其次 D1 绑定 → 都没有则 **null（降级为不落库）**。
+ * 为什么不抛错：增量 1 的部署没有 D1 也应当能跑（抓取本身有价值）；
+ * 路由层会把「没落库」作为显式状态返回，而不是静默当成已保存。
+ */
+export function resolveStore(c: unknown): Store | null {
+  const ctx = c as RouteCtx;
+  if (ctx._store) return ctx._store;
+  const db = ctx.env?.DB as D1Like | undefined;
+  return db ? createD1Store(db) : null;
 }
 
 export function jsonResponse(status: number, body: unknown): Response {

@@ -3,6 +3,55 @@
 > 本文档记录部署事实与线上验证状态（唯一真源在 `../CONTEXT.md` 的验收标准；此处只记「做过什么、结果如何」）。
 > 凭据（复用关系）统一登记在 `docs/线上环境速查.md`，本文不回显任何密钥。
 
+## 0.5 增量 3（评分 + 评测标定）· 2026-11-02
+
+| 项 | 值 |
+|---|---|
+| 迁移 | `db/migrations/0002_scores.sql`（scores 表 + 索引） |
+| 线上版本 | `7db9cb3e-8fe2-4397-98bf-6892039ac953`（评分 API）→ 后续 UI 版本 |
+| 真实网关 | magpie 已配置（复用 product4 凭据；**值不回显**） |
+
+**线上实测（经代理）**：
+- `POST /api/score?limit=10` × 6 批 → **60 条全部评分成功、0 失败**（每批 28–41s）
+- 评分理由可读且判断准确（例：车企业绩 34 分「非前沿技术」；谷歌 AI 搜索监管 80 分）
+- `GET /api/top?threshold=0` → 60 条，分数区间 18–92、中位 64
+
+**阈值标定（eval/run.ts，50 条标签 × 60 条真实评分）**
+
+| 阈值 | Precision | Recall | 漏选率 | F1 |
+|---|---|---|---|---|
+| 50 | 69.2% | 81.8% | 18.2% | 0.750 |
+| 55 | 75.0% | 81.8% | 18.2% | 0.783 |
+| 60 | 77.3% | 77.3% | 22.7% | 0.773 |
+| 65 | 89.5% | 77.3% | 22.7% | 0.829 |
+| **70** | **100.0%** | **77.3%** | **22.7%** | **0.872** ← 推荐 |
+| 75 | 100.0% | 68.2% | 31.8% | 0.811 |
+| 80 | 100.0% | 59.1% | 40.9% | 0.743 |
+
+**结论**：默认阈值从拍脑袋的 60 改为**实测 70**（Precision 100% / Recall 77.3%）。
+报告见 `product5/eval/report.md`，口径见 `product5/eval/README.md`。
+
+**⚠️ 标签来源**：50 条为 **agent 初标**（非人工标注）。流程与数字可复核，但不宣称「已人工标定」。
+用户复核 `eval/labels.json` 后重跑 `npm run eval` 即可更新阈值。
+
+## 0. 增量 2（D1 持久化）· 2026-11-02
+
+| 项 | 值 |
+|---|---|
+| D1 库 | `ai-hot-radar-db` · id `1e53e023-38f4-4afe-bc92-ade98e4b5a93` · binding `DB` |
+| 迁移 | `db/migrations/0001_sources_items.sql`（sources / items / source_health + 索引） |
+| 线上版本 | `14e8e4b5-77ba-479e-92a9-6b8fe7eb8410` |
+
+**线上实测（经代理）**：连续两次 `/api/feed` → 第 1 次 `inserted=180`、第 2 次 `inserted=0 / duplicates=180`（**跨请求去重由唯一约束兜底**）；`/api/items` 只读库、秒回；6 源快照 `lastHealth=ok` 且 `baseline` 已建立（20/40/40/30/40/10）。证据 `e2e-evidence/live-increment2.log`。
+
+**踩坑 2（已修，2026-11-02）**：部署脚本探针用 Node `fetch`，**不认系统代理** → 部署成功但探针全部失败、
+脚本以 exit 1 退出，看起来像「部署失败」（连续两条后台任务被误判）。
+修法：① 支持 `DEPLOY_PROXY` / `HTTPS_PROXY` 走 `curl -x`（并补上 curl 模式的 `content-type` 抓取）；
+② 退出码语义修正——**部署成功但一个 HTTP 响应都没收到 → 记「未验证」，exit 0 + 警告**，只有真收到 HTTP 响应且校验失败才 exit 1。
+
+**踩坑（已修）**：`wrangler d1 migrations apply` 按 **cwd** 解析 `migrations_dir`，在 `dist/ssr` 下执行会报
+「No migrations folder found」→ 部署脚本改为先把 `db/migrations` 拷进 `dist/ssr/db/migrations` 再 apply。
+
 ## 1. 首次部署（2026-11-02 · 增量 1）
 
 | 项 | 值 |
@@ -57,9 +106,9 @@ api.cloudflare.com 404（网络通）；`ego-browser` 二进制缺失。当时�
 | 证据 | 命令 | 结果 |
 |---|---|---|
 | 类型检查 | `npm run typecheck` | 0 error |
-| 单元/契约测试 | `npm test` | **30 通过 / 0 失败** |
+| 单元/契约测试 | `npm test` | **43 通过 / 0 失败**（含 store 持久化语义） |
 | 构建 | `npm run build` | 成功（`dist/ssr/index.js` + `dist/client` 资产） |
-| **本地端到端（E2E）** | `npm run e2e:local` | **11/11 通过**（真实 build 产物 + 真实 HTTP + **真实 HN feed** 夹具）—— 见 `e2e-evidence/local-e2e.log` |
+| **本地端到端（E2E）** | `npm run e2e:local` | **15/15 通过**（真实 build 产物 + 真实 HTTP + 真实 HN feed 夹具 + `node:sqlite` D1 替身跑**真实迁移 SQL**）—— 见 `e2e-evidence/local-e2e.log` |
 | 部署 | `node scripts/deploy.mjs --skip-build` | 成功，版本 `27d54cf4`（首次）→ `c5dc0553`（arXiv 新端点 + 12s 超时），`env.ASSETS` 已绑定 |
 | **真环境 M0** | `curl --proxy 127.0.0.1:7890 …` | **6/6 源 ok，180 条真实数据，无失败** —— `e2e-evidence/live-m0.log` |
 
