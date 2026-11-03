@@ -98,6 +98,9 @@ for (const [host, spec] of Object.entries(fixtures)) {
   }
 }
 
+/** LLM 调用计数（方案 D 验证：粗筛 vs 精排各多少次） */
+const llmCalls = { coarse: 0, final: 0, coarseItems: 0 };
+
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input, init) => {
   const url = typeof input === "string" ? input : String(input?.url ?? input);
@@ -109,6 +112,43 @@ globalThis.fetch = (async (input, init) => {
   const fixture = fixtures[host];
   if (fixture) {
     return new Response(fixture.body, { status: 200, headers: { "content-type": fixture.type } });
+  }
+
+  // ── LLM 网关替身（方案 D 验证用）──
+  // 粗筛请求的 user 消息里有 `[1]` `[2]` 这样的编号行；精排是单条、无编号。
+  // 计数是为了断言「调用次数真的降下来了」。
+  if (host === "placeholder.invalid") {
+    let body = {};
+    try {
+      body = JSON.parse(String(init?.body ?? "{}"));
+    } catch {
+      body = {};
+    }
+    const user = String(body.messages?.[1]?.content ?? "");
+    const numbered = (user.match(/^\[\d+\]/gm) ?? []).length;
+    if (numbered > 0) {
+      llmCalls.coarse++;
+      llmCalls.coarseItems += numbered;
+      const arr = Array.from({ length: numbered }, (_, i) => ({ id: i + 1, score: 9 - (i % 3) }));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(arr) } }] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+    llmCalls.final++;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content:
+                '{"relevance":8,"novelty":7,"usefulness":8,"authority":9,"reason":"重要发布"}',
+            },
+          },
+        ],
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
   }
 
   // 其它源：模拟沙箱不可达（分类应为 network）
@@ -466,6 +506,71 @@ check(
     "batch 写入：源健康快照也走 db.batch",
     batchCalls > before,
     `batchCalls ${before} → ${batchCalls}`,
+  );
+}
+
+
+/* ── 方案 D：批量粗筛 + 逐条精排（堆积场景）────────────────────
+ *
+ * 为什么要单独测：稳态下每轮只新增 ~2 条，粗筛反而是浪费（会跳过）。
+ * 只有**堆积**时（冷启动 / 长期不刷新）粗筛才发挥价值 —— 那才是它要解决的场景。
+ *
+ * 断言的是「调用次数真的降下来了」，而不是「粗筛被调用了」。
+ */
+{
+  const db = workerEnv.DB;
+
+  // 造 25 条待评条目（超过精排上限 20 → 触发粗筛）
+  const now = Date.now();
+  for (let i = 0; i < 25; i++) {
+    db.exec(
+      `INSERT INTO items
+         (content_key, id, source_id, title, link, published_at, summary, first_seen_at, last_seen_at, score_state)
+       VALUES (
+         'ck-${i}', 'id-${i}', 'hn',
+         'OpenAI 发布新模型 ${i} 支持更长上下文与工具调用',
+         'https://example.com/e2e/${i}', ${now},
+         '官方博客介绍了新模型的推理能力与基准表现，附有对比数据与评测结果。',
+         ${now}, ${now}, 'pending'
+       )`,
+    );
+  }
+
+  const before = { ...llmCalls };
+  const res = await fetch(`${BASE}/api/refresh`, {
+    method: "POST",
+    headers: { ...AUTH, "content-type": "application/json" },
+  });
+  const body = await res.json();
+
+  const coarseCalls = llmCalls.coarse - before.coarse;
+  const coarseItems = llmCalls.coarseItems - before.coarseItems;
+  const finalCalls = llmCalls.final - before.final;
+
+  check(
+    "方案D 堆积时启用批量粗筛",
+    coarseCalls > 0,
+    `粗筛调用 ${coarseCalls} 次 · 覆盖 ${coarseItems} 条 · 精排 ${finalCalls} 次`,
+  );
+  check(
+    "方案D 粗筛批量为 10（RoBatch 的 16 悬崖前留余量）",
+    coarseItems > 0 && coarseItems / coarseCalls <= 10,
+    `每批 ${(coarseItems / Math.max(1, coarseCalls)).toFixed(1)} 条`,
+  );
+  check(
+    "方案D 精排只做 top20（不是全部 25 条）",
+    finalCalls === 20,
+    `精排 ${finalCalls} 次`,
+  );
+  check(
+    "方案D 总调用次数低于逐条评（25 次）",
+    coarseCalls + finalCalls < 25,
+    `总调用 ${coarseCalls + finalCalls} 次 < 25 次`,
+  );
+  check(
+    "方案D 粗分落库（items.coarse_score 有值）",
+    (db.prepare(`SELECT COUNT(*) AS n FROM items WHERE coarse_score IS NOT NULL`).bind().first()?.n ?? 0) > 0,
+    "粗分已写入 items.coarse_score",
   );
 }
 

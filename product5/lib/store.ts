@@ -52,6 +52,12 @@ export type StoredItem = {
   scoreAttempts?: number;
   /** 评分队列状态 */
   scoreState?: "pending" | "scored" | "dropped" | "dead";
+  /**
+   * 粗筛分（0–10，方案 D）。**只用于排序，绝不用于阈值判断** ——
+   * 阈值 70 是用逐条精排 prompt（score-v1）标定的，粗分与它不同量纲。
+   * null = 还没粗筛过。
+   */
+  coarseScore?: number | null;
   id: string;
   sourceId: string;
   title: string;
@@ -165,6 +171,17 @@ export type Store = {
   /** 写评分（同一条只留最新一次：重评分是常态） */
   saveScores(rows: ScoreRow[], now?: number): Promise<number>;
   /**
+   * 写粗筛分（方案 D）。
+   *
+   * 粗分**只用于排序**，绝不用于阈值判断（阈值 70 是用逐条精排 prompt 标定的）。
+   * 落库的意义：粗筛一次、多次用 —— 用户点第二次「刷新」时，队列里已有粗分的条目
+   * 跳过粗筛（省一次批量调用），直接进入精排。
+   */
+  saveCoarseScores(
+    rows: Array<{ contentKey: string; coarseScore: number }>,
+    now?: number,
+  ): Promise<number>;
+  /**
    * 认领一批待评分条目（审查 A-1 / B-2 修复）。
    *
    * 与原 `listUnscored` 的区别：
@@ -183,6 +200,17 @@ export type Store = {
     }>,
     now?: number,
   ): Promise<void>;
+  /**
+   * **释放**认领（把 claimed_at 置回 NULL）—— 方案 D 必需。
+   *
+   * 为什么必需：方案 D 一次认领一批（可能 90 条），但只精排 top K（20 条）。
+   * 剩下的条目**本轮没处理**，如果留着租约，它们会被锁 10 分钟
+   * （默认租约时长），用户点第二次「刷新」时根本认领不到它们 ——
+   * 而它们的粗分已经算好了、只差精排，白白浪费。
+   *
+   * 所以：本轮结束后把「认领了但没处理」的条目释放掉，让下一轮立即能认领。
+   */
+  releaseClaims(contentKeys: string[], now?: number): Promise<number>;
   /** 读达到阈值的条目（按总分倒序）—— 精选的数据源 */
   listTopScored(opts: { threshold: number; limit?: number }): Promise<RankedItem[]>;
   /**
@@ -238,6 +266,8 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
   const itemState = new Map<string, "pending" | "scored" | "dropped" | "dead">();
   const itemAttempts = new Map<string, number>();
   const itemClaimedAt = new Map<string, number>();
+  /** 粗筛分（方案 D）：0–10，缺省 = 未粗筛 */
+  const itemCoarse = new Map<string, number>();
   const itemLastError = new Map<string, string>();
   const digests = new Map<string, DigestRecord & { updatedAt: number }>();
 
@@ -336,6 +366,23 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
       return rows.length;
     },
 
+    async saveCoarseScores(rows, now = Date.now()) {
+      let n = 0;
+      for (const r of rows) {
+        itemCoarse.set(r.contentKey, r.coarseScore);
+        n++;
+      }
+      return n;
+    },
+
+    async releaseClaims(contentKeys) {
+      let n = 0;
+      for (const k of contentKeys) {
+        if (itemClaimedAt.delete(k)) n++;
+      }
+      return n;
+    },
+
     async claimForScoring(limit, opts = {}) {
       const now = opts.now ?? Date.now();
       const leaseMs = opts.leaseMs ?? 10 * 60_000;
@@ -360,7 +407,11 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
         .slice(0, limit);
 
       for (const it of eligible) itemClaimedAt.set(it.contentKey, now);
-      return eligible;
+      // 带出粗筛分（方案 D）：排序阶段用
+      return eligible.map((it) => ({
+        ...it,
+        coarseScore: itemCoarse.get(it.contentKey) ?? null,
+      }));
     },
 
     async markScored(results, now = Date.now()) {
@@ -470,6 +521,9 @@ type ItemRow = {
   score_attempts?: number;
   claimed_at?: number | null;
   last_error?: string | null;
+  /** 粗筛分（方案 D）：0–10，缺省 = 未粗筛 */
+  coarse_score?: number | null;
+  coarse_at?: number | null;
   id: string;
   source_id: string;
   title: string;
@@ -703,11 +757,43 @@ export function createD1Store(db: D1Like): Store {
       return written;
     },
 
+    async saveCoarseScores(rows, now = Date.now()) {
+      if (rows.length === 0) return 0;
+      let written = 0;
+      for (const r of rows) {
+        await db
+          .prepare(`UPDATE items SET coarse_score = ?, coarse_at = ? WHERE content_key = ?`)
+          .bind(r.coarseScore, now, r.contentKey)
+          .run();
+        written++;
+      }
+      return written;
+    },
+
+    async releaseClaims(contentKeys) {
+      if (contentKeys.length === 0) return 0;
+      // D1 绑定上限 100 → 每批 90 个 key
+      let n = 0;
+      for (let i = 0; i < contentKeys.length; i += 90) {
+        const chunk = contentKeys.slice(i, i + 90);
+        const marks = chunk.map(() => "?").join(",");
+        await db
+          .prepare(`UPDATE items SET claimed_at = NULL WHERE content_key IN (${marks})`)
+          .bind(...chunk)
+          .run();
+        n += chunk.length;
+      }
+      return n;
+    },
+
     async claimForScoring(limit, opts = {}) {
       const now = opts.now ?? Date.now();
       const leaseMs = opts.leaseMs ?? 10 * 60_000;
       const leaseCutoff = now - leaseMs;
-      const capped = Math.max(1, Math.min(limit, 50));
+      // 上限 90：认领语句是 `UPDATE ... WHERE content_key IN (?,...)`，
+      // D1 单条 SQL 最多 100 个绑定参数 → 90 个 key + 1 个时间戳 = 91，安全。
+      // 从 50 提到 90 是为了配合方案 D（批量粗筛一次能覆盖更多条目）。
+      const capped = Math.max(1, Math.min(limit, 90));
 
       // ① 先选出候选（未认领或租约已过期），按 attempts 升序 —— 旧条目先评，避免饿死
       //
@@ -1032,6 +1118,7 @@ function rowToItem(r: ItemRow): StoredItem {
     contentKey: r.content_key,
     scoreAttempts: r.score_attempts ?? 0,
     scoreState: (r.score_state as StoredItem["scoreState"]) ?? "pending",
+    coarseScore: r.coarse_score ?? null,
     id: r.id,
     sourceId: r.source_id,
     title: r.title,

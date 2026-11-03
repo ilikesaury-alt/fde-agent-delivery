@@ -34,6 +34,7 @@ product5/
 │   ├── rss.ts      ★            零依赖 RSS/Atom 解析 + 抓取 + 去重 + 源健康（healthOf：截断≠异常）
 │   ├── score.ts    ★            两阶段评分：本地预筛 + 四维打分 + 阈值/topN（纯函数）
 │   ├── dedup.ts    ★新增        L1 标题 Jaccard + L2 SimHash 指纹 + 数字签名硬闸（省 LLM 调用）
+│   ├── coarse.ts   ★新增        批量粗筛（10 条/次，按 id 校验，漏条单条重试）
 │   ├── digest.ts   ★            日报 6 板块 + selectWithQuota 单源配额（纯函数）
 │   ├── daily.ts                 日报生成编排（cron 与 POST 共用）
 │   ├── ingest.ts                抓取编排（/api/feed 与 cron 共用）
@@ -113,6 +114,11 @@ product5/
 - 跨请求去重生效：连打两次 `/api/feed` → 180 新增 → 180 判重
 - 真实评分 60 条零失败（magpie `auto/minimax-m3.1-flash`，prompt `score-v1`）
 - 阈值标定：70 → Precision 100% / Recall 77.3% / F1 0.872（50 条标签 × 60 条真实评分）
+- **方案 D 已上线**（2026-11-03）：批量粗筛（10 条/次）+ 逐条精排 top 20。
+  - 粗分只用于**排序**，阈值 70 仍由逐条精排（score-v1）判定 → **评测集不用重做**
+  - 粗分落库（迁移 0007 `items.coarse_score`）→ 第二次刷新跳过粗筛，预算全给精排
+  - 稳态（新增 ≤20 条）**刻意跳过粗筛**（反而多花调用）；堆积时 29 条 → 23 次调用
+  - ⚠️ `store.releaseClaims()`：认领了但没精排的条目必须释放，否则被租约锁 10 分钟
 - **无任何定时任务**（2026-11-03 增量 8：原 3 个 Cron 全部删除，线上触发器已清零）
   - ⚠️ `wrangler deploy` / `wrangler triggers deploy` **只增不删** cron —— 必须用
     `PUT /accounts/{id}/workers/scripts/{name}/schedules`（body `[]`）清零；已写进 `scripts/deploy.mjs`

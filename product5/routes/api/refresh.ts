@@ -31,8 +31,17 @@ import { claimAndScore } from "../../lib/queue.ts";
 import { DEFAULT_THRESHOLD, DEFAULT_TOP_N, SCORE_PROMPT_VERSION } from "../../lib/score.ts";
 import { DEFAULT_SOURCES } from "../../lib/sources.ts";
 
-/** 单次请求的评分条数上限（外部 subrequest 预算：50 − 抓取 14 − 余量） */
-const SCORE_BUDGET = 30;
+/**
+ * 单次请求的**外部 subrequest 预算**（Workers Free：50/次）。
+ *
+ * 分法：抓取 14 次 + 粗筛/精排 ≤ 33 次 + 3 次余量（重试）。
+ * 方案 D（批量粗筛 + 逐条精排）就在这 33 次里分配：
+ * 粗筛 10 条/次，精排 20 条 → 最多覆盖 130 条待评（而非逐条时的 30 条）。
+ */
+const LLM_CALL_BUDGET = 33;
+
+/** 方案 D：逐条精排的条数上限（粗筛之后只精排这么多条） */
+const MAX_FINAL = 20;
 
 export const POST = defineHandler(async (c) => {
   const env = resolveEnv(c);
@@ -83,9 +92,13 @@ export const POST = defineHandler(async (c) => {
           MAGPIE_MODEL: env.MAGPIE_MODEL,
         },
         fetchImpl,
-        limit: intEnv(c.req.query("limit"), SCORE_BUDGET),
+        // 一次认领的条数：足够大以便粗筛能覆盖（认领本身不花外部调用）
+        limit: intEnv(c.req.query("limit"), 200),
         model: env.MAGPIE_MODEL || "deepseek-chat",
         promptVersion: SCORE_PROMPT_VERSION,
+        // 方案 D：粗筛 + 精排共用这 33 次调用预算
+        llmCallBudget: LLM_CALL_BUDGET,
+        maxFinal: intEnv(c.req.query("maxFinal"), MAX_FINAL),
       });
       if (score.failed > 0) {
         warnings.push(`${score.failed} 条评分失败（AI 网关可能不稳定），已保留在队列中，可再刷新一次重试。`);
@@ -139,6 +152,8 @@ export const POST = defineHandler(async (c) => {
           failed: score.failed,
           dead: score.dead,
           pending: score.pending,
+          coarseScored: score.coarseScored,
+          coarseCalls: score.coarseCalls,
         }
       : null,
     digest: digest

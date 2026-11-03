@@ -4,6 +4,8 @@ import { runAll } from "./harness.ts";
 
 import "./rss.test.ts";
 import "./dedup.test.ts";
+import "./coarse.test.ts";
+import "./coarse-integration.test.ts";
 import "./refresh.test.ts";
 import "./store.test.ts";
 import "./score.test.ts";

@@ -166,6 +166,10 @@ type RefreshResponse = {
     failed: number;
     dead: number;
     pending: boolean;
+    /** 方案 D：本次批量粗筛覆盖的条数 */
+    coarseScored: number;
+    /** 方案 D：本次花在粗筛上的外部调用次数 */
+    coarseCalls: number;
   } | null;
   digest: {
     date: string;
@@ -537,6 +541,10 @@ export default function IndexPage() {
       ];
       if (s) {
         bits.push(`评分 ${s.scored} 条`);
+        // 粗筛信息（方案 D）：只在真的粗筛过时显示，稳态下不显示
+        if (s.coarseCalls > 0) {
+          bits.push(`粗筛 ${s.coarseScored} 条 / ${s.coarseCalls} 次调用`);
+        }
         if (s.duplicated > 0) bits.push(`去重跳过 ${s.duplicated} 条`);
         if (s.dropped > 0) bits.push(`预筛丢弃 ${s.dropped} 条`);
         if (s.failed > 0) bits.push(`失败 ${s.failed} 条`);

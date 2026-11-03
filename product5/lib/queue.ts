@@ -13,6 +13,7 @@
  */
 
 import { scoreMany } from "./llm.ts";
+import { coarseBatch, DEFAULT_COARSE_BATCH } from "./coarse.ts";
 import { prefilterAll, type ScoreInput } from "./score.ts";
 import {
   clusterBySimilarity,
@@ -26,14 +27,37 @@ import type { ScoreRow, Store, StoredItem } from "./store.ts";
 /** 单条条目最多尝试几次 LLM（超过则标 dead，不再重试） */
 export const MAX_SCORE_ATTEMPTS = 3;
 
+/**
+ * 方案 D：逐条精排的默认条数上限。
+ *
+ * 为什么是 20：实测过阈值率约 **40%**（当日窗口 136/335 过 70），
+ * 精排 20 条 → 约 8 条过阈值；精排 30 条 → 约 12 条（刚好填满精选配额）。
+ * 但预算有限（外部 subrequest 50/次，抓取占 14），粗筛 + 精排要分。
+ * 取 20 是平衡：粗筛能多覆盖一些、精排不至于太少。
+ * 用户点第二次刷新时，队列里已有粗分的条目**跳过粗筛** → 预算全给精排 → 能累积精排量。
+ */
+export const DEFAULT_MAX_FINAL = 20;
+
 export type ScoreBatchOptions = {
   store: Store;
   env: { MAGPIE_BASE_URL?: string; MAGPIE_API_KEY?: string; MAGPIE_MODEL?: string };
   fetchImpl?: typeof fetch;
-  /** 本批最多评几条（上限 30） */
+  /** 本批最多评几条（上限 45） */
   limit: number;
   model: string;
   promptVersion: string;
+  /**
+   * 方案 D：逐条精排的条数上限（粗筛之后只精排这么多条）。
+   * 不传则用默认（20）。
+   */
+  maxFinal?: number;
+  /**
+   * 方案 D：本次可用的**外部调用预算**（粗筛 + 精排共用）。
+   * 不传则由 limit 推导（保守：limit 次逐条调用）。
+   */
+  llmCallBudget?: number;
+  /** 方案 D：批量粗筛的批量大小（默认 10） */
+  coarseBatchSize?: number;
 };
 
 export type ScoreBatchResult = {
@@ -49,6 +73,10 @@ export type ScoreBatchResult = {
   dead: number;
   /** 队列里是否还有待评条目 */
   pending: boolean;
+  /** 方案 D：本次批量粗筛覆盖的条数（已花掉 ceil(n/batch) 次调用） */
+  coarseScored: number;
+  /** 方案 D：本次实际花在粗筛上的外部调用次数 */
+  coarseCalls: number;
   details: Array<{
     contentKey: string;
     title: string;
@@ -60,6 +88,8 @@ export type ScoreBatchResult = {
     prefilter?: string;
     /** 重复判定说明（与哪条重复、依据是什么） */
     duplicateOf?: string;
+    /** 粗筛分（仅排序用） */
+    coarse?: number;
   }>;
 };
 
@@ -79,6 +109,8 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
       failed: 0,
       dead: 0,
       pending: false,
+      coarseScored: 0,
+      coarseCalls: 0,
       details: [],
     };
   }
@@ -126,6 +158,8 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
       failed: 0,
       dead: 0,
       pending,
+      coarseScored: 0,
+      coarseCalls: 0,
       details,
     };
   }
@@ -224,8 +258,130 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
       failed: 0,
       dead: 0,
       pending,
+      coarseScored: 0,
+      coarseCalls: 0,
       details,
     };
+  }
+
+  /* ── 阶段 1.7：批量粗筛（方案 D，2026-11-03）──
+   *
+   * 目的：**省 LLM 调用**。逐条精排每条一次调用，195 条就是 195 次；
+   * 粗筛用「一次调用打包 10 条」把大部分条目挡在精排之外。
+   *
+   * 三条硬规则：
+   *  1. **粗分只用于排序，绝不用于阈值判断** —— 阈值 70 是用逐条精排 prompt（score-v1）
+   *     在评测集上标定出来的（Precision 100% / Recall 77.3%）。批量粗筛的分数分布与逐条
+   *     不同，拿粗分套 70 会失真。所以：粗分 → 排序 → 取 top K → **逐条精排** → 用精排分判阈值。
+   *  2. **粗分要落库**（items.coarse_score）—— 粗筛一次、多次用。用户点第二次「刷新」时，
+   *     队列里已有粗分的条目**跳过粗筛**，直接进精排 —— 否则每次点击都把队列重新粗筛一遍，
+   *     那是纯浪费（粗筛自己也是 LLM 调用）。
+   *  3. **受调用预算约束** —— 外部 subrequest 50/次（Workers Free）。抓取占 14，
+   *     剩下的分给「粗筛 + 精排」。预算不够时，粗筛只做预算内的部分，
+   *     其余条目保持「无粗分」留在队列，下次点击继续。
+   */
+  const maxFinal = Math.max(1, Math.min(opts.maxFinal ?? DEFAULT_MAX_FINAL, 45));
+  // 预算：优先保精排（精排决定最终精选），剩下的给粗筛
+  const budget = Math.max(
+    maxFinal,
+    opts.llmCallBudget ?? Math.min(limit, 45),
+  );
+  const batchSize = Math.max(1, Math.min(opts.coarseBatchSize ?? DEFAULT_COARSE_BATCH, 20));
+
+  // 已有粗分的条目直接可用；没有的才需要粗筛
+  const needCoarse = toScore.filter((c) => c.item.coarseScore === null || c.item.coarseScore === undefined);
+  const hasCoarse = toScore.filter(
+    (c) => c.item.coarseScore !== null && c.item.coarseScore !== undefined,
+  );
+
+  let coarseCalls = 0;
+  let coarseScored = 0;
+  // ⚠️ 只有「条目数超过精排上限」时才值得粗筛。
+  // 条目数 ≤ maxFinal 时，全部逐条精排就是 N 次调用；而粗筛要先花 ceil(N/10) 次
+  // 再精排 N 次 —— **反而多花**。实测稳态下每轮只新增 ~2 条（195 抓取里 192 条已在库），
+  // 那里粗筛是纯浪费。只有堆积时（冷启动、长期不刷新）粗筛才划算。
+  const worthCoarse = toScore.length > maxFinal;
+
+  if (needCoarse.length > 0 && worthCoarse) {
+    // 粗筛预算 = 总预算 − 精排预算；每批 10 条
+    const coarseBudget = Math.max(0, budget - maxFinal);
+    const coarseCap = coarseBudget * batchSize;
+    const toCoarse = needCoarse.slice(0, coarseCap);
+
+    if (toCoarse.length > 0) {
+      const res = await coarseBatch(
+        {
+          base: opts.env.MAGPIE_BASE_URL ?? "",
+          key: opts.env.MAGPIE_API_KEY ?? "",
+          model: opts.model,
+          fetchImpl: opts.fetchImpl,
+        },
+        toCoarse.map((c) => ({
+          contentKey: c.item.contentKey,
+          title: c.item.title,
+          summary: c.item.summary,
+          sourceId: c.item.sourceId,
+        })),
+        { batchSize, maxCalls: coarseBudget },
+      );
+      // 落库粗分（一次算、多次用）
+      const rows = res
+        .filter((r) => r.score !== null)
+        .map((r) => ({ contentKey: r.contentKey, coarseScore: r.score! }));
+      if (rows.length > 0) {
+        try {
+          await opts.store.saveCoarseScores(rows);
+        } catch {
+          // 粗分落库失败不阻断：本次仍可用内存里的粗分排序
+        }
+      }
+      coarseScored = rows.length;
+      coarseCalls = Math.ceil(toCoarse.length / batchSize);
+      // 回填到内存
+      for (const r of res) {
+        if (r.score === null) continue;
+        const c = toCoarse.find((x) => x.item.contentKey === r.contentKey);
+        if (c) c.item.coarseScore = r.score;
+      }
+    }
+  }
+
+  // 按粗分降序排序（无粗分的排最后）→ 取 top K 逐条精排
+  const ranked = [...toScore].sort((a, b) => {
+    const ca = a.item.coarseScore ?? -1;
+    const cb = b.item.coarseScore ?? -1;
+    if (ca !== cb) return cb - ca;
+    return (a.item.publishedAt ?? 0) - (b.item.publishedAt ?? 0);
+  });
+  const finalBatch = ranked.slice(0, maxFinal);
+  for (const c of finalBatch) {
+    if (c.item.coarseScore !== null && c.item.coarseScore !== undefined) {
+      const d = details.find((x) => x.contentKey === c.item.contentKey);
+      if (d) d.coarse = c.item.coarseScore;
+    }
+  }
+
+  /* ── 释放没精排的条目的租约（方案 D 必需）──
+   *
+   * 本轮认领了一批，但只精排了 top K。剩下的条目**本轮没处理**，
+   * 如果留着租约会被锁 10 分钟 —— 用户点第二次「刷新」时根本认领不到它们，
+   * 而它们的粗分已经算好了、只差精排，白白浪费。
+   * 所以本轮结束前把它们释放掉，让下一轮立即能认领。
+   */
+  const processed = new Set<string>([
+    ...finalBatch.map((c) => c.item.contentKey),
+    ...droppedKeys,
+    ...duplicateKeys,
+  ]);
+  const toRelease = toScore
+    .filter((c) => !processed.has(c.item.contentKey))
+    .map((c) => c.item.contentKey);
+  if (toRelease.length > 0) {
+    try {
+      await opts.store.releaseClaims(toRelease);
+    } catch {
+      // 释放失败不阻断：租约到期后仍能重新认领
+    }
   }
 
   /* ── 阶段 2：LLM 打分（只对通过预筛的条目）── */
@@ -233,7 +389,7 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   // 并发 2 让 30 条的批要跑 15 轮；5 并发只需 6 轮，直接决定队列消化速度。
   const results = await scoreMany(
     opts.env,
-    toScore.map((c) => c.input),
+    finalBatch.map((c) => c.input),
     { fetchImpl: opts.fetchImpl, concurrency: 5 },
   );
 
@@ -242,7 +398,7 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   const deadKeys: string[] = [];
 
   results.forEach((r, idx) => {
-    const { item } = toScore[idx]!;
+    const { item } = finalBatch[idx]!;
     if (r.result.ok) {
       scoreRows.push({
         contentKey: item.contentKey,
@@ -297,6 +453,8 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
     failed: retryKeys.length,
     dead: deadKeys.length,
     pending: (stats.pending ?? 0) > 0,
+    coarseScored,
+    coarseCalls,
     details,
   };
 }
