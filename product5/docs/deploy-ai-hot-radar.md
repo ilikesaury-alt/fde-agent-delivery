@@ -3,6 +3,41 @@
 > 本文档记录部署事实与线上验证状态（唯一真源在 `../CONTEXT.md` 的验收标准；此处只记「做过什么、结果如何」）。
 > 凭据（复用关系）统一登记在 `docs/线上环境速查.md`，本文不回显任何密钥。
 
+## 0.10 UI 令牌层重设计 + Markdown 渲染修复上线 · 2026-11-03
+
+| 项 | 值 |
+|---|---|
+| 线上版本 | `9b69b06c-9de2-450f-a40b-a5ad53e42f3b`（部署 `2026-11-03T07:20:24Z`） |
+| 上一版本 | `7088bef7-2c8d-40d8-a904-0d2310c0b54e`（2026-11-03T03:20:06Z，**白屏回归那版**） |
+| 上线内容 | 设计令牌层重设计（`styles.css` 令牌 → `var(--color-*)`）+ Markdown 渲染修复 + 浏览器 E2E ④ 双凭据断言 |
+| 迁移 | 无（`wrangler d1 migrations apply` → `No migrations to apply!`） |
+
+**为什么必须上这一版**：`7088bef7` 仍是「暗色 class 版」（线上首页 HTML 含 `text-slate-100`，白底近白字），
+重设计后的令牌层版本尚未部署——本次才真正把 **UI 令牌层 + Markdown 修复** 推上线。
+
+**部署前验证**（全过才推）：
+typecheck 0 error · 单测 107/107 · build 成功 · 本地 E2E 27/27 · 文档 0 断链。
+
+**线上验证**：
+- 部署脚本探针全过：`/api/health` 200 · `/` 200 · `/api/feed?src=hn&limit=3` 200（条目 3 · 351ms · 失败 0 源）
+- 首页 HTML 已无 `text-slate-100` 残留，改为 `var(--color-surface)` / `var(--color-ink)` 等令牌类
+- 样式资产切换为 `layout-DOtmxj4t.css`（旧版 `layout-D0bWFYxA.css`）
+- `/api/top?threshold=0` → 12 条，单源配额生效（`perSourceMax=4`，`skippedByQuota=10`）
+- **浏览器 E2E 带令牌 19/19 全过**（水合、页签、分数徽标 33 个、折叠展开、日报 Markdown 标题 8 个、
+  外链 2 个、无 JS 错误、无失败请求）；关键回归断言 **④b 不白屏** ✔
+- 证据：`e2e-evidence/deploy-2026-11-03.log`、`e2e-evidence/browser-e2e.log`（令牌值已脱敏）
+
+**踩坑（本次新增）**：
+1. **wrangler OAuth 凭据过期且 refresh token 失效**（`oauth_token` 于 2026-11-03T04:19Z 过期，
+   调 `dash.cloudflare.com/oauth2/token` 返回 `invalid_client`）→ wrangler 无法自动续期，
+   必须人工授权一次：`npx wrangler login --device` → 在**已登录的浏览器**里打开
+   `https://dash.cloudflare.com/oauth2/device/verify` 输入验证码 → 授权后凭据写回 `default.toml`。
+   踩坑细节：设备码 5 分钟过期；**ego-browser 是独立 profile，没有用户的 Cloudflare 登录态**，
+   在那里操作会一直停在登录页 —— 正确做法是让用户在**自己的 Chrome**（已登录）里完成授权。
+2. **浏览器 E2E 漏传 `TOKEN` 会被误读为回归**：脚本默认无令牌模式，6 项数据类断言必然不满足
+   （无令牌拿不到数据是预期）。**跑带令牌模式必须显式传 `TOKEN`**，
+   否则会得到 13/19 / 14/19 的假红。令牌从 `.secrets.json` 取，**不要写进命令行历史或日志**。
+
 ## 0.9 增量 5（UI 完善）· 2026-11-02
 
 | 项 | 值 |
