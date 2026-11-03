@@ -14,7 +14,7 @@ import { createD1Store, type D1Like } from "../lib/store.ts";
 export const cron = "30 0 * * *";
 
 export default defineScheduled(async (_controller, env) => {
-  const e = env as {
+  const e = env as unknown as {
     DB?: D1Like;
     DIGEST_THRESHOLD?: string;
     DIGEST_TOP_N?: string;

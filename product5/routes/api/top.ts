@@ -73,8 +73,14 @@ export const GET = defineHandler(async (c) => {
   const quotaOn = c.req.query("quota") !== "0";
 
   try {
-    // 配额开启时多取候选（3×），否则过滤后填不满 limit
-    const candidates = await store.listTopScored({ threshold, limit: quotaOn ? limit * 3 : limit });
+    // ⚠️ 2026-11-03 修正：候选窗口从 3× 提到 10×。
+    // 原实现只取 `limit * 3` 条候选再按配额过滤，导致：
+    //   全库有 66 条 ≥70 分的条目，但候选只有 36 条 → 配额过滤后只能填到
+    //   3 个源 × 4 条 = 12 条（即 topN 上限），其余高分条目根本没进候选池。
+    // 现象就是「数据太少」——不是没数据，是候选窗口把数据挡在门外。
+    // 10× 在 Free 套餐下仍只多一次 D1 查询（同一个 SELECT，只改 LIMIT），
+    // 代价可忽略；而窗口越大，配额越能把不同源填进来。
+    const candidates = await store.listTopScored({ threshold, limit: quotaOn ? limit * 10 : limit });
 
     const { kept, skippedByQuota } = quotaOn
       ? applyQuota(candidates, { threshold, topN: limit, perSourceMax })

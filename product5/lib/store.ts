@@ -15,6 +15,20 @@
 import { hashId, normalizeUrl } from "./rss.ts";
 import type { FeedSource, RawItem, SourceHealth } from "./types.ts";
 
+/**
+ * D1 绑定（只用到 store.ts 实际调用的子集）。
+ *
+ * 为什么要自己定义而不是用 `D1Database`：本仓的 `D1Like` 被四处当**结构类型**使用
+ * （lib/http.ts · crons/*），而本地 e2e/d1-shim.mjs 的替身**不是**完整的 D1Database
+ * （没有 raw() / meta 等）。定义一个窄接口能让替身与真实 D1 同时满足。
+ *
+ * `batch` 是**可选的**：真实 D1 有它，本地替身也实现了；
+ * 但它可缺席 —— 这时写入路径回退到逐条 prepare().run()（功能不变，只是慢）。
+ *
+ * 为什么要 batch：Cloudflare 官方 limits —— D1 的**内部** subrequest 上限 1,000/次
+ * （外部 50/次），而 `db.batch()` **整批只计 1 个 query**。
+ * 扩源后一轮要写 200+ 条条目 + 14 源快照，逐条发会瞬间打满内部预算。
+ */
 export type D1Like = {
   prepare(sql: string): {
     bind(...values: unknown[]): {
@@ -23,6 +37,12 @@ export type D1Like = {
       run(): Promise<unknown>;
     };
   };
+  /**
+   * 可选：批量执行（整批计 1 个内部 subrequest）。
+   * 参数用 `unknown[]` 接收 —— 真实 D1 收 D1PreparedStatement[]，本地替身收自己那套，
+   * 这里不绑定具体形状，由调用方负责传入「已 bind 好的语句对象」。
+   */
+  batch?: (stmts: unknown[]) => Promise<Array<{ meta?: { changes?: number } } | undefined>>;
 };
 
 /** 每条资讯的持久化形态 */
@@ -304,11 +324,14 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
           return claimed === undefined || now - claimed > leaseMs;
         })
         // 关键（审查 A-1）：按尝试次数升序，让旧条目先被评，避免被新条目饿死
+        // ⚠️ 2026-11-03 修正：同 attempts 时**取最旧**（published_at ASC）而非最新。
+        //    原为 DESC → 永远先评最新条目，旧条目持续积压（线上实测 pending 394 条只增不减）。
+        //    必须与 D1 版的 ORDER BY 保持一致，否则两个 Store 实现行为分叉。
         .sort((a, b) => {
           const da = itemAttempts.get(a.contentKey) ?? 0;
           const db = itemAttempts.get(b.contentKey) ?? 0;
           if (da !== db) return da - db;
-          return (b.publishedAt ?? 0) - (a.publishedAt ?? 0);
+          return (a.publishedAt ?? 0) - (b.publishedAt ?? 0);
         })
         .slice(0, limit);
 
@@ -467,7 +490,19 @@ export function createD1Store(db: D1Like): Store {
       for (const item of raw) unique.set(contentKeyOf(item), item);
       const rows = [...unique.entries()];
 
-      let inserted = 0;
+      // ⚠️ 2026-11-03 重构写入路径以走 db.batch()。
+      // 原因：扩源到 14 源后，一轮要写 200+ 条条目 + 14 条源快照。
+      //   逐条 prepare().run() = 200+ 次 D1 往返 → 打满内部 subrequest 预算
+      //   （官方 limits：D1 内部 1,000/次，但外部只有 50/次，且 batch 整批只计 1 个）。
+      // 现在：**所有 INSERT / UPDATE 拼成一批**交给 db.batch()（计 1 个 query）。
+      //
+      // 单条 SQL 最多 100 个绑定参数（D1 官方限制），本 INSERT 有 9 列 → 每条最多 11 行。
+      const INSERT_SQL = `INSERT OR IGNORE INTO items
+         (content_key, id, source_id, title, link, published_at, summary, first_seen_at, last_seen_at)
+         VALUES `;
+      const UPDATE_SQL = `UPDATE items SET last_seen_at = ?, title = ?, summary = ? WHERE content_key = ?`;
+
+      const stmts: Array<{ sql: string; values: unknown[] }> = [];
       for (let i = 0; i < rows.length; i += ROWS_PER_CHUNK) {
         const chunk = rows.slice(i, i + ROWS_PER_CHUNK);
         const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?,?)").join(",");
@@ -482,15 +517,7 @@ export function createD1Store(db: D1Like): Store {
           now,
           now,
         ]);
-        const res = (await db
-          .prepare(
-            `INSERT OR IGNORE INTO items
-               (content_key, id, source_id, title, link, published_at, summary, first_seen_at, last_seen_at)
-             VALUES ${placeholders}`,
-          )
-          .bind(...values)
-          .run()) as { meta?: { changes?: number } } | undefined;
-        inserted += res?.meta?.changes ?? 0;
+        stmts.push({ sql: INSERT_SQL + placeholders, values });
       }
 
       // 已存在的条目：更新 last_seen_at + title/summary（源站会修订标题），first_seen_at 不动
@@ -498,57 +525,73 @@ export function createD1Store(db: D1Like): Store {
       // 审查 B-4：原实现 D1 只 UPDATE last_seen_at，而内存实现会覆盖 title/summary ——
       // 两个「同接口」实现语义不同，导致「单测/本地 E2E 看到新标题、线上永远是首见版本」。
       // 现在 D1 也更新 title/summary，两边一致。
-      for (let i = 0; i < rows.length; i += 30) {
-        const chunk = rows.slice(i, i + 30);
-        const marks = chunk.map(() => "?").join(",");
-        const keys = chunk.map(([k]) => k);
-        // 逐行 UPDATE（不同行 title 不同，无法用单条多值语句）——按 30 行/批控制 subrequest 数
-        for (let j = 0; j < chunk.length; j++) {
-          const [, item] = chunk[j]!;
-          await db
-            .prepare(`UPDATE items SET last_seen_at = ?, title = ?, summary = ? WHERE content_key = ?`)
-            .bind(now, item.title, item.summary, keys[j]!)
-            .run();
+      for (const [key, item] of rows) {
+        stmts.push({ sql: UPDATE_SQL, values: [now, item.title, item.summary, key] });
+      }
+
+      let inserted = 0;
+      if (db.batch) {
+        // 真实 D1 签名：batch 收 D1PreparedStatement[]，每个语句自己 .bind()
+        const prepared = stmts.map((s) => db.prepare(s.sql).bind(...s.values));
+        const res = await db.batch(prepared);
+        // batch 按语句顺序返回结果：前 N 条是 INSERT（分片数），其余是 UPDATE
+        const insertCount = Math.ceil(rows.length / ROWS_PER_CHUNK);
+        for (const r of res.slice(0, insertCount)) inserted += r?.meta?.changes ?? 0;
+      } else {
+        // 回退路径（无 batch 的 D1 替身）：逐条执行，语义一致
+        for (const s of stmts) {
+          const res = (await db.prepare(s.sql).bind(...s.values).run()) as {
+            meta?: { changes?: number };
+          } | undefined;
+          if (s.sql.startsWith("INSERT")) inserted += res?.meta?.changes ?? 0;
         }
-        void marks;
       }
 
       return { inserted, duplicates: rows.length - inserted };
     },
 
     async recordRun(records, now = Date.now()) {
+      // ⚠️ 2026-11-03：改为 batch —— 14 源 × 2 条 = 28 次往返 → 1 个 batch。
+      // 与 saveItems 同一理由（Cloudflare 官方 limits：batch 整批只计 1 个内部 subrequest）。
+      const HEALTH_SQL = `INSERT INTO source_health (source_id, level, error, item_count, elapsed_ms, checked_at)
+         VALUES (?,?,?,?,?,?)`;
+      const SOURCE_SQL = `INSERT INTO sources
+         (id, name, url, lang, verified, last_checked_at, last_health, last_error, last_item_count, baseline_count, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           url = excluded.url,
+           lang = excluded.lang,
+           verified = excluded.verified,
+           last_checked_at = excluded.last_checked_at,
+           last_health = excluded.last_health,
+           last_error = excluded.last_error,
+           last_item_count = excluded.last_item_count,
+           baseline_count = CASE
+             WHEN excluded.last_health = 'ok'
+               THEN MAX(COALESCE(sources.baseline_count, 0), excluded.last_item_count)
+             ELSE sources.baseline_count
+           END,
+           updated_at = excluded.updated_at`;
+
+      const stmts: Array<{ sql: string; values: unknown[] }> = [];
       for (const r of records) {
-        await db
-          .prepare(
-            `INSERT INTO source_health (source_id, level, error, item_count, elapsed_ms, checked_at)
-             VALUES (?,?,?,?,?,?)`,
-          )
-          .bind(r.source.id, r.health.level, r.health.error ?? null, r.health.itemCount, r.elapsedMs ?? null, now)
-          .run();
+        stmts.push({
+          sql: HEALTH_SQL,
+          values: [
+            r.source.id,
+            r.health.level,
+            r.health.error ?? null,
+            r.health.itemCount,
+            r.elapsedMs ?? null,
+            now,
+          ],
+        });
 
         // baseline 只在「正常且更多」时抬升（避免坏源把基线一起拉低）
-        await db
-          .prepare(
-            `INSERT INTO sources
-               (id, name, url, lang, verified, last_checked_at, last_health, last_error, last_item_count, baseline_count, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-             ON CONFLICT(id) DO UPDATE SET
-               name = excluded.name,
-               url = excluded.url,
-               lang = excluded.lang,
-               verified = excluded.verified,
-               last_checked_at = excluded.last_checked_at,
-               last_health = excluded.last_health,
-               last_error = excluded.last_error,
-               last_item_count = excluded.last_item_count,
-               baseline_count = CASE
-                 WHEN excluded.last_health = 'ok'
-                   THEN MAX(COALESCE(sources.baseline_count, 0), excluded.last_item_count)
-                 ELSE sources.baseline_count
-               END,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
+        stmts.push({
+          sql: SOURCE_SQL,
+          values: [
             r.source.id,
             r.source.name,
             r.source.url,
@@ -561,8 +604,16 @@ export function createD1Store(db: D1Like): Store {
             r.health.level === "ok" ? r.health.itemCount : null,
             now,
             now,
-          )
-          .run();
+          ],
+        });
+      }
+      if (stmts.length === 0) return;
+
+      if (db.batch) {
+        const prepared = stmts.map((s) => db.prepare(s.sql).bind(...s.values));
+        await db.batch(prepared);
+      } else {
+        for (const s of stmts) await db.prepare(s.sql).bind(...s.values).run();
       }
     },
 
@@ -624,12 +675,20 @@ export function createD1Store(db: D1Like): Store {
       const capped = Math.max(1, Math.min(limit, 50));
 
       // ① 先选出候选（未认领或租约已过期），按 attempts 升序 —— 旧条目先评，避免饿死
+      //
+      // ⚠️ 2026-11-03 修正排序：原为 `score_attempts ASC, published_at DESC`，
+      // 看起来「旧条目先评」，但实际上 attempts 相同的条目（绝大多数是 0）会按
+      // **发布时间倒序**取，也就是**永远先评最新、最旧的一直排最后** →
+      // 队列会持续堆积（实测 pending 394 条且只增不减），旧条目饿死。
+      //
+      // 改成 `published_at ASC`（最旧优先）：因为 attempts 升序已把「该重试的失败条目」
+      // 顶到前面，同 attempts 时取最旧 —— 两个目标（重试优先 + 旧条目不饿死）同时满足。
       const res = await db
         .prepare(
           `SELECT content_key FROM items
             WHERE score_state = 'pending'
               AND (claimed_at IS NULL OR claimed_at < ?)
-            ORDER BY score_attempts ASC, COALESCE(published_at, 0) DESC
+            ORDER BY score_attempts ASC, COALESCE(published_at, 0) ASC
             LIMIT ?`,
         )
         .bind(leaseCutoff, capped)
@@ -765,7 +824,7 @@ export function createD1Store(db: D1Like): Store {
             ORDER BY s.total DESC, COALESCE(i.published_at, 0) DESC
             LIMIT ?`,
         )
-        .bind(opts.threshold, Math.max(1, Math.min(opts.limit ?? 20, 200)))
+        .bind(opts.threshold, Math.max(1, Math.min(opts.limit ?? 20, 1000)))
         .all<ItemRow & { score_total: number; score_reason: string; score_at: number }>();
       return (res.results ?? []).map((r) => ({
         ...rowToItem(r),

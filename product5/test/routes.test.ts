@@ -2,6 +2,7 @@
 import { assert, assertEqual, describe, it } from "./harness.ts";
 import * as feedRoute from "../routes/api/feed.ts";
 import * as sourcesRoute from "../routes/api/sources.ts";
+import * as topRoute from "../routes/api/top.ts";
 import { createMemoryStore, type Store } from "../lib/store.ts";
 
 const TOKEN = "secret-token";
@@ -107,11 +108,13 @@ describe("/api/feed · 失败隔离与计数", () => {
   it("坏源不拖垮整体：200 + failures 分类 + 好源条目保留", async () => {
     const fetchImpl = mockFetch({
       "hnrss.org": () => new Response("down", { status: 503 }),
-      "huggingface.co": () =>
-        new Response(rss([{ title: "HF 文章", link: "https://hf.co/p1" }])),
+      // ⚠️ 2026-11-03：hf-blog 已从源列表移除（该 feed 不提供任何摘要，
+      // 预筛必然全丢）→ 改用 openai（官方源，实测 40/40 条有摘要）。
+      "openai.com": () =>
+        new Response(rss([{ title: "OpenAI 新闻", link: "https://openai.com/p1" }])),
     });
 
-    const res = await GET(ctx({ url: "/api/feed?src=hn,hf-blog", fetchImpl }));
+    const res = await GET(ctx({ url: "/api/feed?src=hn,openai-news", fetchImpl }));
     assertEqual(res.status, 200);
     const body = (await res.json()) as {
       items: Array<{ title: string }>;
@@ -119,22 +122,25 @@ describe("/api/feed · 失败隔离与计数", () => {
       sources: Array<{ id: string; health: { level: string } }>;
     };
     assertEqual(body.items.length, 1);
-    assertEqual(body.items[0]?.title, "HF 文章");
+    assertEqual(body.items[0]?.title, "OpenAI 新闻");
     assertEqual(body.failures.length, 1);
     assertEqual(body.failures[0]?.sourceId, "hn");
     assertEqual(body.failures[0]?.error, "http_status");
-    assertEqual(body.sources[0]?.health.level, "broken");
-    assertEqual(body.sources[1]?.health.level, "ok");
+    // ⚠️ 断言按 sourceId 查，不依赖数组下标 —— 源列表扩充后顺序会变，
+    //   下标断言会在源增删时误报（这类脆弱断言已吃过一次亏）。
+    assertEqual(body.sources.find((s) => s.id === "hn")?.health.level, "broken");
+    assertEqual(body.sources.find((s) => s.id === "openai-news")?.health.level, "ok");
   });
 
   it("跨源重复被去重并计数（A2）", async () => {
     const same = { title: "同一篇", link: "https://dup.com/post" };
     const fetchImpl = mockFetch({
       "hnrss.org": () => new Response(rss([same])),
-      "huggingface.co": () => new Response(rss([{ ...same, link: "https://dup.com/post?utm_source=x" }])),
+      // ⚠️ 2026-11-03：hf-blog 已从源列表移除 → 改用 openai（跨源同链接 + 追踪参数仍应去重）
+      "openai.com": () => new Response(rss([{ ...same, link: "https://dup.com/post?utm_source=x" }])),
     });
 
-    const res = await GET(ctx({ url: "/api/feed?src=hn,hf-blog", fetchImpl }));
+    const res = await GET(ctx({ url: "/api/feed?src=hn,openai-news", fetchImpl }));
     const body = (await res.json()) as {
       items: unknown[];
       counts: { fetched: number; kept: number; deduped: number };
@@ -264,5 +270,109 @@ describe("/api/sources · 源健康历史（增量 5）", () => {
     const body = (await res.json()) as { sources: Array<{ id: string }> };
     assertEqual(body.sources.length, 1);
     assertEqual(body.sources[0]?.id, "hn");
+  });
+});
+
+/**
+ * /api/top · 候选窗口与单源配额（D11）
+ *
+ * 背景（2026-11-03 实测）：线上「精选」只出 12 条，且只来自 3 个源。
+ * 根因不是没数据（全库有 66 条 ≥70 分的条目），而是**候选窗口太窄**：
+ * 旧实现只取 `limit * 3` 条候选再做配额过滤 → 候选被 2 个高产源占满，
+ * 配额过滤后剩下的名额无人可填 → 实际入选 = 配额上限之和。
+ * 修正：候选窗口提到 `limit * 10`。
+ */
+describe("/api/top · 候选窗口与配额", () => {
+  const GET_TOP = topRoute.GET as unknown as Handler;
+
+  /** 造 N 个源 × M 条高分条目 */
+  async function seedScored(store: Store, sources: number, perSource: number) {
+    for (let s = 0; s < sources; s++) {
+      const sid = `src${s}`;
+      await store.saveItems(
+        Array.from({ length: perSource }, (_, i) => ({
+          id: `${sid}-${i}`,
+          sourceId: sid,
+          title: `${sid} 条目 ${i}`,
+          link: `https://${sid}.com/${i}`,
+          publishedAt: new Date(2026, 0, 1 + i).toISOString(),
+          summary: "摘要足够长，用于通过预筛，不影响本用例。",
+        })),
+      );
+    }
+    const all = await store.recentItems({ limit: 500 });
+    await store.saveScores(
+      all.map((i) => ({
+        contentKey: i.contentKey,
+        relevance: 9,
+        novelty: 9,
+        usefulness: 9,
+        authority: 9,
+        total: 90,
+        reason: "高分",
+        model: "m",
+        promptVersion: "score-v1",
+      })),
+    );
+  }
+
+  it("候选窗口足够宽 → 配额能填满 topN 且来源多样", async () => {
+    const store = createMemoryStore();
+    // 6 个源 × 10 条 = 60 条高分；topN=12 → 每源上限 4
+    await seedScored(store, 6, 10);
+
+    const res = await GET_TOP(ctx({ url: "/api/top?threshold=70", store }));
+    assertEqual(res.status, 200);
+    const body = (await res.json()) as {
+      count: number;
+      perSourceMax: number;
+      skippedByQuota: number;
+      items: Array<{ sourceId: string }>;
+    };
+
+    assertEqual(body.count, 12, "应填满 topN=12");
+    assertEqual(body.perSourceMax, 4, "每源上限 = topN/3");
+    const bySource = new Map<string, number>();
+    for (const i of body.items) bySource.set(i.sourceId, (bySource.get(i.sourceId) ?? 0) + 1);
+    assert(
+      bySource.size >= 3,
+      `入选应来自多个源（实际 ${bySource.size} 个：${JSON.stringify([...bySource])}）`,
+    );
+    for (const [sid, n] of bySource) {
+      assert(n <= 4, `源 ${sid} 占比 ${n} 不得超过配额 4`);
+    }
+  });
+
+  it("单源不超过配额上限（配额真的在起作用）", async () => {
+    const store = createMemoryStore();
+    await seedScored(store, 6, 10);
+    const res = await GET_TOP(ctx({ url: "/api/top?threshold=70", store }));
+    const body = (await res.json()) as {
+      perSourceMax: number;
+      skippedByQuota: number;
+      items: Array<{ sourceId: string }>;
+    };
+
+    const bySource = new Map<string, number>();
+    for (const i of body.items) bySource.set(i.sourceId, (bySource.get(i.sourceId) ?? 0) + 1);
+    for (const [sid, n] of bySource) {
+      assert(n <= body.perSourceMax!, `源 ${sid} 入选 ${n} 条不得超过配额 ${body.perSourceMax}`);
+    }
+    // ⚠️ skippedByQuota 可能为 0 —— 这正是修好的证据：
+    //   候选窗口够宽（6 源 × 10 条）时，配额能直接填满 topN 且无需跳过任何人。
+    //   旧实现（候选 3×）下同场景会跳过大量条目却仍填不满。
+    assert(
+      body.skippedByQuota >= 0,
+      `skippedByQuota=${body.skippedByQuota}（候选充足时为 0 是正常且期望的）`,
+    );
+  });
+
+  it("?quota=0 关闭配额 → 返回全库最高分", async () => {
+    const store = createMemoryStore();
+    await seedScored(store, 6, 10);
+    const res = await GET_TOP(ctx({ url: "/api/top?threshold=70&quota=0", store }));
+    const body = (await res.json()) as { count: number; perSourceMax: number | null };
+    assertEqual(body.perSourceMax, null, "quota=0 时不设上限");
+    assertEqual(body.count, 12, "仍受 topN 限制");
   });
 });

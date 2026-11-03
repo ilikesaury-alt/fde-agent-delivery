@@ -316,4 +316,74 @@ describe("healthOf · 三级健康（D10）", () => {
     assertEqual(healthOf({ ok: true, source: src("s1"), items }).level, "ok");
     assertEqual(healthOf({ ok: true, source: src("s1"), items }, 12).level, "ok");
   });
+
+  // ── 2026-11-03 回归：截断 ≠ 坏源 ──────────────────────────────────
+  //
+  // 背景：旧实现把 `truncated`（被 maxItems 截断）直接判成 degraded，
+  // 后果是 hf-blog（真实 895 条，只取 40 条）与 ithome（真实 60 条）天天报警，
+  // 而它们其实完全健康。审查 A-11 当初的初衷是「察觉被截断」，
+  // 但把「取样上限」当成「源故障」会让健康源被误报 —— 必须在回归测试里钉死。
+  //
+  // ⚠️ baseline 存的是**我们实际抓到的条数**（不是源的真实条数）——
+  //    所以「上次抓到 40 条、这次也抓到 40 条」不是骤降，判 ok。
+  it("被 maxItems 截断但条数与基线一致 → ok（截断是配置行为，不是源故障）", () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({
+      id: String(i),
+      sourceId: "s1",
+      title: `t${i}`,
+      link: `https://x.com/${i}`,
+      publishedAt: null,
+      summary: "",
+    }));
+    const h = healthOf({ ok: true, source: src("s1"), items, truncated: true }, 40);
+    assertEqual(h.level, "ok", "被截断到与基线相同的条数时不应报异常");
+    assertEqual(h.itemCount, 40);
+  });
+
+  it("条目数真的跌到基线 40% 以下 → 仍判 degraded（与截断无关）", () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({
+      id: String(i),
+      sourceId: "s1",
+      title: `t${i}`,
+      link: `https://x.com/${i}`,
+      publishedAt: null,
+      summary: "",
+    }));
+    const h = healthOf({ ok: true, source: src("s1"), items }, 40);
+    assertEqual(h.level, "degraded", "源真从 40 条跌到 5 条时仍要报异常");
+  });
+
+  // ── 2026-11-03 回归：改 maxItems 后不得全源误报 degraded ──────────
+  //
+  // 背景：baseline 记的是「历史上抓到过多少条」（可能是 40），而 maxItems 后来从 40 降到 15。
+  //   直接比较 → 「15 < 40×0.4」恒成立 → **所有源都被误报 degraded**
+  //   （实测上线后 arxiv-cs-ai 与 ithome 立刻中招）。
+  // 修法：比较前把 baseline 封顶到本次配置的取样上限。
+  it("历史 baseline 高于当前取样上限时 → 封顶后判 ok（改 maxItems 不得误报）", () => {
+    const items = Array.from({ length: 15 }, (_, i) => ({
+      id: String(i),
+      sourceId: "s1",
+      title: `t${i}`,
+      link: `https://x.com/${i}`,
+      publishedAt: null,
+      summary: "",
+    }));
+    // 历史 baseline=40（旧的 maxItems=40 时代），本次只取 15（新的 maxItems=15）
+    const h = healthOf({ ok: true, source: src("s1"), items, truncated: true }, 40, { maxItems: 15 });
+    assertEqual(h.level, "ok", "取样上限降到 15 后不应把正常源误报为 degraded");
+  });
+
+  it("封顶后仍远低于真实抓取量 → 仍判 degraded（封顶不掩盖真骤降）", () => {
+    const items = Array.from({ length: 3 }, (_, i) => ({
+      id: String(i),
+      sourceId: "s1",
+      title: `t${i}`,
+      link: `https://x.com/${i}`,
+      publishedAt: null,
+      summary: "",
+    }));
+    // 上限 15、baseline 40（封顶后为 15）→ 3 < 15×0.4=6 → 真骤降
+    const h = healthOf({ ok: true, source: src("s1"), items }, 40, { maxItems: 15 });
+    assertEqual(h.level, "degraded", "只抓到 3 条时仍要报异常");
+  });
 });

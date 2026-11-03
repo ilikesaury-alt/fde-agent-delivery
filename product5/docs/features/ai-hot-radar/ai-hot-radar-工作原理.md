@@ -195,7 +195,7 @@ SSR 由 Void 处理，页面首屏即出四个页签。
 cd product5
 npm install --ignore-scripts        # 沙箱环境（CI 用 npm ci）
 npm run typecheck && npm test && npm run build
-npm run e2e:local                    # 端到端 22 项（真实构建产物 + SQLite 替身跑真实迁移 SQL）
+npm run e2e:local                    # 端到端 27 项（真实构建产物 + SQLite 替身跑真实迁移 SQL）
 npm run eval                        # 阈值标定（需 eval/scores.json）
 node scripts/deploy.mjs --secrets .secrets.json
 # 本机需代理：DEPLOY_PROXY=http://127.0.0.1:7890 node scripts/deploy.mjs --secrets .secrets.json

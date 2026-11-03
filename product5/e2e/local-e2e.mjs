@@ -42,16 +42,61 @@ const MIME = {
 };
 
 /* ── 1) 上游替身：按 host 返回真实夹具 / 故意失败 ── */
+//
+// ⚠️ 2026-11-03：源列表从 6 个扩到 14 个后，本替身必须**逐个 host 覆盖**。
+//   否则未覆盖的源会被判为 network 失败 → 「A6 好源仍为 ok」「A2 跨源去重」等断言全线失败
+//   （这类「夹具跟不上配置」的失败最容易被误读成产品 bug）。
+//
+//   夹具里刻意保留一条与 HN 同链接的条目（simonw 夹具），用于验证跨源去重。
+const FIXTURE_HOSTS = [
+  "hnrss.org",
+  "openai.com",
+  "deepmind.google",
+  "blog.google",
+  "aws.amazon.com",
+  "blogs.nvidia.com",
+  "export.arxiv.org",
+  "simonwillison.net",
+  "techcrunch.com",
+  "importai.substack.com",
+  "www.marktechpost.com",
+  "www.technologyreview.com",
+  "www.ithome.com",
+  "sspai.com",
+];
+
 const fixtures = {
   "hnrss.org": {
     body: await readFile(join(root, "e2e", "fixtures", "hn-frontpage.xml"), "utf8"),
     type: "application/rss+xml; charset=utf-8",
   },
-  "huggingface.co": {
-    body: await readFile(join(root, "e2e", "fixtures", "hf-blog.xml"), "utf8"),
+  // 各扩源：一个最小合法 Atom feed（每源一条 + 摘要够长）
+  "openai.com": { file: "openai-news.xml" },
+  "deepmind.google": { file: "deepmind.xml" },
+  "blog.google": { file: "google-ai.xml" },
+  "aws.amazon.com": { file: "aws-ml.xml" },
+  "blogs.nvidia.com": { file: "nvidia.xml" },
+  "export.arxiv.org": { file: "arxiv-cs-ai.xml" },
+  "techcrunch.com": { file: "techcrunch-ai.xml" },
+  "importai.substack.com": { file: "importai.xml" },
+  "www.marktechpost.com": { file: "marktechpost.xml" },
+  "www.technologyreview.com": { file: "mit-tech-review.xml" },
+  "www.ithome.com": { file: "ithome.xml" },
+  "sspai.com": { file: "sspai.xml" },
+  // simonw：跨源去重用（夹具里有一条与 HN 同链接的条目）
+  "simonwillison.net": {
+    body: await readFile(join(root, "e2e", "fixtures", "simonw.xml"), "utf8"),
     type: "application/atom+xml; charset=utf-8",
   },
 };
+
+// 把 { file } 形式展开为真实 body
+for (const [host, spec] of Object.entries(fixtures)) {
+  if (spec.file) {
+    spec.body = await readFile(join(root, "e2e", "fixtures", spec.file), "utf8");
+    spec.type = "application/atom+xml; charset=utf-8";
+  }
+}
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input, init) => {
@@ -206,8 +251,8 @@ check(
   JSON.stringify(single.body?.sources?.[0]?.health),
 );
 
-// A2：跨源去重（Atom 夹具里有一条与 HN 同链接）
-const duo = await getJson("/api/feed?src=hn,hf-blog&limit=20");
+// A2：跨源去重（simonw 的 Atom 夹具里有一条与 HN 同链接）
+const duo = await getJson("/api/feed?src=hn,simonw&limit=20");
 check(
   "A2 跨源去重：3 条 HN + 2 条 Atom，去重后 4 条",
   duo.status === 200 &&
@@ -222,7 +267,8 @@ check(
   `同链接条目数=${duo.body?.items?.filter((i) => String(i.link).includes("wikihack.netlify.app")).length}`,
 );
 
-// A6：失败隔离（其余 4 个源在本环境不可达）
+// A6：失败隔离（14 个源全部有夹具 → 本环境不应出现失败源；
+//     失败隔离本身由「不存在的 host」在单测里覆盖，见 test/routes.test.ts）
 const all = await getJson("/api/feed?limit=30");
 const failures = all.body?.failures ?? [];
 const levels = (all.body?.sources ?? []).map((s) => `${s.id}:${s.health?.level}`);
@@ -232,13 +278,13 @@ check(
   `status=${all.status} ${all.ms}ms`,
 );
 check(
-  "A6 坏源被分类记录（network）且健康标记 broken",
-  failures.length === 4 && failures.every((f) => typeof f.error === "string"),
-  failures.map((f) => `${f.sourceId}:${f.error}`).join(", "),
+  "A6 14 个源全部抓通（每个源都有上游夹具）",
+  failures.length === 0 && (all.body?.sources ?? []).length === 14,
+  `sources=${(all.body?.sources ?? []).length} failures=${failures.map((f) => `${f.sourceId}:${f.error}`).join(", ") || "无"}`,
 );
 check(
   "A6 好源仍为 ok（失败未放大）",
-  levels.includes("hn:ok") && levels.includes("hf-blog:ok"),
+  levels.includes("hn:ok") && levels.includes("simonw:ok") && levels.every((l) => l.endsWith(":ok")),
   levels.join(" | "),
 );
 
@@ -250,8 +296,8 @@ check(
   `storage=${stored1.body?.storage} count=${stored1.body?.count}`,
 );
 
-const rerun1 = await getJson("/api/feed?src=hn,hf-blog&limit=20");
-const rerun2 = await getJson("/api/feed?src=hn,hf-blog&limit=20");
+const rerun1 = await getJson("/api/feed?src=hn,simonw&limit=20");
+const rerun2 = await getJson("/api/feed?src=hn,simonw&limit=20");
 check(
   "A2 跨请求去重：重复抓取不新增（inserted=0）",
   rerun1.status === 200 && rerun2.body?.persisted?.inserted === 0,
@@ -355,6 +401,73 @@ check(
   ["日报", "精选", "历史", "源健康"].every((t) => html.includes(t)),
   `命中=${["日报", "精选", "历史", "源健康"].filter((t) => html.includes(t)).join(",")}`,
 );
+
+// ── 2026-11-03：D1 batch 写入路径 ───────────────────────────────
+//
+// 扩源到 14 源后，一轮要写 200+ 条条目；逐条 prepare().run() = 200+ 次 D1 往返，
+// 打满内部 subrequest 预算（官方 limits：D1 内部 1,000/次，但 batch 整批只计 1 个）。
+// 写入路径已改为 db.batch()，这里验证**batch 与逐条语义等价**，
+// 且 batch 真的被调用了（否则等于没测）。
+{
+  const shim = await createMigratedD1();
+  // 直接用 lib 源（与 worker 同一份代码）；dist 产物是打包过的，拿不到单独模块
+  const { createD1Store: createStore } = await import("../lib/store.ts");
+
+  let batchCalls = 0;
+  let batchStmts = 0;
+  const counted = {
+    ...shim,
+    async batch(stmts) {
+      batchCalls++;
+      batchStmts += stmts.length;
+      return shim.batch(stmts);
+    },
+  };
+
+  const store = createStore(counted);
+  const raw = Array.from({ length: 25 }, (_, i) => ({
+    id: `i${i}`,
+    sourceId: "hn",
+    title: `条目 ${i}`,
+    link: `https://a.com/${i}`,
+    publishedAt: "2026-11-01T00:00:00.000Z",
+    summary: "摘要",
+  }));
+  const res = await store.saveItems(raw);
+  check(
+    "batch 写入：25 条一次入库全部新增",
+    res.inserted === 25 && res.duplicates === 0,
+    `inserted=${res.inserted} duplicates=${res.duplicates}`,
+  );
+  check(
+    "batch 写入：真的走了 db.batch（而不是逐条发）",
+    batchCalls > 0 && batchStmts > 25,
+    `batchCalls=${batchCalls} stmts=${batchStmts}`,
+  );
+
+  // 跨请求去重：同一批再写一次 → 全部判重，且不新增
+  const res2 = await store.saveItems(raw);
+  check(
+    "batch 写入：重写同一批 → 全部判重（唯一约束兜底）",
+    res2.inserted === 0 && res2.duplicates === 25,
+    `inserted=${res2.inserted} duplicates=${res2.duplicates}`,
+  );
+
+  // 源快照（recordRun）也要走 batch
+  const before = batchCalls;
+  await store.recordRun([
+    {
+      source: { id: "hn", name: "Hacker News", url: "https://hnrss.org/frontpage", lang: "en", verified: true },
+      health: { sourceId: "hn", level: "ok", itemCount: 25, checkedAt: new Date().toISOString() },
+      elapsedMs: 100,
+    },
+  ]);
+  check(
+    "batch 写入：源健康快照也走 db.batch",
+    batchCalls > before,
+    `batchCalls ${before} → ${batchCalls}`,
+  );
+}
 
 server.close();
 

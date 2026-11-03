@@ -200,6 +200,47 @@ describe("store · 评分落库（增量 3）", () => {
     assert(!left.some((i) => i.title === "高分条目"));
   });
 
+  // ── 2026-11-03 回归：待评队列必须「最旧优先」，否则旧条目永远饿死 ──
+  //
+  // 背景：原排序 `attempts ASC, published_at DESC` —— attempts 相同的条目（绝大多数是 0）
+  // 会按**发布时间倒序**取，也就是永远先评最新、最旧的一直排最后。
+  // 线上实测 pending 394 条且只增不减，原因就在这里。
+  // 修正后：attempts 升序（重试优先）+ 同 attempts 取**最旧**。
+  it("待评队列取最旧优先（旧条目不被新条目挤掉）", async () => {
+    const store = createMemoryStore();
+    await store.saveItems([
+      item({ link: "https://a.com/old", title: "最旧", publishedAt: "2026-11-01T00:00:00.000Z" }),
+      item({ link: "https://a.com/mid", title: "居中", publishedAt: "2026-11-02T00:00:00.000Z" }),
+      item({ link: "https://a.com/new", title: "最新", publishedAt: "2026-11-03T00:00:00.000Z" }),
+    ]);
+
+    const claimed = await store.claimForScoring(2);
+    assertEqual(claimed.length, 2);
+    assertEqual(claimed[0]?.title, "最旧", "最旧条目必须排第一");
+    assertEqual(claimed[1]?.title, "居中");
+  });
+
+  it("待评队列优先取没试过的条目（attempts 少的在前）", async () => {
+    const store = createMemoryStore();
+    await store.saveItems([
+      item({ link: "https://a.com/new", title: "最新", publishedAt: "2026-11-03T00:00:00.000Z" }),
+      item({ link: "https://a.com/old", title: "最旧", publishedAt: "2026-11-01T00:00:00.000Z" }),
+    ]);
+    const all = await store.recentItems();
+    const oldKey = all.find((i) => i.title === "最旧")!.contentKey;
+
+    // 让「最旧」失败过一次（attempts 变 1）→ 它不再优先于没试过的条目
+    await store.markScored([{ contentKey: oldKey, state: "pending", error: "timeout" }]);
+
+    const claimed = await store.claimForScoring(1);
+    assertEqual(claimed.length, 1);
+    assertEqual(
+      claimed[0]?.title,
+      "最新",
+      "attempts 升序 → 没试过的（0 次）优先于失败过的（1 次）",
+    );
+  });
+
   it("重评分覆盖旧分（同一条只留最新，避免标定口径漂移）", async () => {
     const { store, key } = await seed();
     const k = key("高分条目");

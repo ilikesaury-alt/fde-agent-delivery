@@ -66,7 +66,8 @@ export async function ingestFeeds(opts: IngestOptions): Promise<IngestResult> {
 
   const all = results.flatMap((r) => (r.ok ? r.items : []));
   const { items, dropped } = dedupeItems(all);
-  const health = results.map((r) => healthOf(r, baselines.get(r.source.id)));
+  // 传入 maxItems：baseline 必须封顶到本次取样上限后再比较（见 lib/rss.ts healthOf 注释）
+  const health = results.map((r) => healthOf(r, baselines.get(r.source.id), { maxItems: opts.maxItems }));
 
   const failures = results
     .filter((r): r is Extract<typeof r, { ok: false }> => !r.ok)

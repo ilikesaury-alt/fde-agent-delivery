@@ -54,7 +54,9 @@ export type ScoreBatchResult = {
 
 /** 别名：测试与路由用 claimAndScore，语义「认领并评分一批」 */
 export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatchResult> {
-  const limit = Math.max(1, Math.min(opts.limit, 30));
+  // 上限 45：外部 subrequest 预算 50/次（Free 套餐），一批 N 条 = N 次 LLM 调用，
+  // 留 5 个余量给 D1 查询与重试。2026-11-03 从 30 提到 45。
+  const limit = Math.max(1, Math.min(opts.limit, 45));
 
   // 认领一批（已按 attempts 升序 + 租约过滤）
   const claimed: StoredItem[] = await opts.store.claimForScoring(limit);
@@ -102,10 +104,12 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   }
 
   /* ── 阶段 2：LLM 打分（只对通过预筛的条目）── */
+  // 并发 2 → 5（2026-11-03）：Workers 同时等待响应的连接上限是 6，
+  // 并发 2 让 30 条的批要跑 15 轮；5 并发只需 6 轮，直接决定队列消化速度。
   const results = await scoreMany(
     opts.env,
     candidates.map((c) => c.input),
-    { fetchImpl: opts.fetchImpl, concurrency: 2 },
+    { fetchImpl: opts.fetchImpl, concurrency: 5 },
   );
 
   const scoreRows: ScoreRow[] = [];

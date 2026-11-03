@@ -9,7 +9,7 @@
 
 ## 1. 当前状态（一句话）
 
-**已上线并通过真环境验证**：version `9b69b06c`（部署 `2026-11-03T07:20:24Z`，**含 UI 令牌层重设计 + Markdown 渲染修复**），线上 6 源全部可抓（180 条/轮）、真实评分零失败、
+**已上线并通过真环境验证**：version `ebf7e21d`（部署 `2026-11-03T08:34Z`，**含源扩充 6→14 + 健康口径修正 + 评分提速**），线上 **14 源全部可抓（195 条/轮）**、真实评分零失败、
 日报自动生成并落库、四页签 UI 可用；阈值经评测集实测标定为 70（Precision 100% / Recall 77.3%）。
 **三个 Cron 均已观测到真实触发**（抓取每小时 :06 一次、连续 16h+ 无间断；评分每批消化队列 8 条；
 日报 00:30 UTC 自动生成）。
@@ -33,13 +33,13 @@ product5/
 │   └── 0002_scores.sql          scores
 │   └── 0003_daily.sql           daily
 ├── lib/
-│   ├── rss.ts      ★            零依赖 RSS/Atom 解析 + 抓取 + 去重 + 源健康（23 项测试）
+│   ├── rss.ts      ★            零依赖 RSS/Atom 解析 + 抓取 + 去重 + 源健康（healthOf：截断≠异常）
 │   ├── score.ts    ★            两阶段评分：本地预筛 + 四维打分 + 阈值/topN（纯函数）
 │   ├── digest.ts   ★            日报 6 板块 + selectWithQuota 单源配额（纯函数）
 │   ├── daily.ts                 日报生成编排（cron 与 POST 共用）
 │   ├── ingest.ts                抓取编排（/api/feed 与 cron 共用）
 │   ├── llm.ts                   magpie 适配（严格 JSON 校验、失败分类、单条失败不写库）
-│   ├── store.ts                 D1 实现 + 内存实现（同接口）
+│   ├── store.ts                 D1 实现（批量写入走 db.batch）+ 内存实现（同接口）
 │   ├── types.ts  sources.ts  http.ts  auth.ts
 ├── crons/
 │   ├── fetch.ts                 每小时 :05 抓取
@@ -48,13 +48,13 @@ product5/
 ├── routes/api/{health,feed,items,top,score,digest,sources}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment；index.tsx 含自研 Markdown 渲染
 ├── styles.css                     设计令牌层（与①–④同构：表面/描边/文字/品牌/语义色 + 亮暗两套）
-├── test/*.ts                      107 项单测（node --experimental-strip-types；含审查回归 19 项）
+├── test/*.ts                      116 项单测（node --experimental-strip-types；含审查回归 19 项 + 源健康/队列排序/候选窗口回归）
 ├── eval/                        阈值标定：labels.json + scores.json + run.ts + report.md
 ├── scripts/deploy.mjs           构建 → 迁移 → 部署 → 探针（支持 DEPLOY_PROXY / --probe-only）
 └── e2e/{local-e2e.mjs,d1-shim.mjs,live-m0.mjs,fixtures/}
 ```
 
-## 3. 五条不能破坏的纪律（破坏任意一条都是回退）
+## 3. 六条不能破坏的纪律（破坏任意一条都是回退）
 
 1. **去重必须靠 DB 唯一约束**（`items.content_key`），不能靠内存 Set。
    内存去重在重启/多实例下失效，而资讯去重恰恰是跨请求的。
@@ -66,6 +66,10 @@ product5/
    否则手动刷新与自动生成的口径会分叉 —— 这类分叉在「一天只产出一份」的东西上极难发现。
 5. **坏源不污染基线**：`baseline_count` 只在「正常且条目更多」时抬升。
    否则坏源会把基线拉低，导致「条目骤降」判定永久失效。
+6. **取样上限与健康判定必须解耦**（2026-11-03 新增）：`maxItems` 是**配置行为**，
+   「被截断」既不是源异常、也不该参与「条目骤降」判定；且比较 baseline 前必须**先按当前上限封顶**
+   —— 否则改 maxItems 就会让全部源误报 degraded（实测踩过两次）。
+   反面：源真的只给 3 条时仍要报 degraded（封顶不掩盖真故障）。
 
 ## 4. 已知坑（都踩过，别再踩）
 
@@ -77,13 +81,21 @@ product5/
 | `wrangler d1 migrations apply` 报「No migrations folder」 | wrangler 按 **cwd** 解析 `migrations_dir` | 部署脚本先把 `db/migrations` 拷进 `dist/ssr/db/migrations` |
 | RSS 标题变空、条目被跳过 | CDATA 被 `<[^>]+>` 整段吞掉 | **先解包 CDATA 再剥标签** |
 | 同一篇文章被判成两条 | URL 尾斜杠未归一 | `normalizeUrl` 去尾斜杠 + 去追踪参数 |
-| `arXiv` RSS 返回空壳 | 旧端点 `export.arxiv.org/rss/<cat>` 已迁移 | 改 `rss.arxiv.org/rss/<cat>` |
+| `arXiv` RSS 返回空壳 | 旧端点 `export.arxiv.org/rss/<cat>` 已迁移 | 改 `rss.arxiv.org/rss/<cat>`（**2026-11-03：此端点也已失效** → 改用官方 Atom API `export.arxiv.org/api/query`） |
 | 首页没有客户端脚本（页面不响应） | Void 读 `/.vite/manifest.json`，替身剥掉 `.vite` 就 404 | 替身只剥前导斜杠，保留 `.vite/` |
 | 精选被单个源垄断 | `arxiv-cs-ai` 日更 40 篇、权威度天然高 | D11 单源配额（topN 的 1/3），让位给次高分其它源 |
 | 本地 D1 测不出绑定上限 | 本地 SQLite 上限 32766，线上 D1 是 100 | 批量写入按**变量数**切批（items 10 行、scores 9 行） |
 | **白底近白字（上线首版 UI）** | 页面用暗色系 class（text-slate-100）但 body 没有背景色 → 白底上浅灰字几乎不可见 | 2026-11-03 重设计：接入与①–④同构的设计令牌层（styles.css），颜色只从 `var(--color-*)` 取，亮暗各一套；页面内不再出现硬编码色值 |
 | **Markdown 渲染丢粗体/拆散列表** | 旧 renderInline 只认「粗体包裹的链接」，日报里 `**180**` 这类纯粗体带星号原样显示；bullet 的缩进续行（来源 · 时间）被当独立段落 | renderInline 先按 `**…**` 分段再解析链接；续行并入上一条列表项渲染为 `.doc-sub` 次行 |
 | 浏览器 E2E ④ 假阴性 | 旧断言依赖「点击后 600ms 内按钮仍是抓取中」，本地 shim 抓取 2ms 完成 → 必挂 | 改为「轮询到抓取中 **或** 页头抓取统计变化」双凭据（2026-11-03） |
+| **健康源被误报 degraded（2026-11-03）** | 「被 maxItems 截断」被当成「源异常」——hf-blog 真实 895 条、ithome 真实 60 条，都只因被取样到 40 条而报警 | 截断不再参与健康判定；只有真条目骤降才 degraded（`lib/rss.ts` healthOf） |
+| **改 maxItems 后全源误报 degraded** | baseline 记的是历史抓取量（40），新上限是 15 → 「15 < 40×0.4」恒成立 | 比较前把 baseline 封顶到当前上限（healthOf 的 `opts.maxItems`）；并用迁移 0006 清理存量 |
+| **精选被单个源垄断** | `arxiv-cs-ai` 日更 40 篇、权威度天然高 | D11 单源配额（topN 的 1/3），让位给次高分其它源 |
+| **精选只来自 3 个源（2026-11-03）** | `/api/top` 候选窗口只有 `limit×3` → 全库 66 条 ≥70 分的条目被挡在候选池外 | 候选窗口提到 `limit×10`（D11 配额才能真正把不同源填进来） |
+| **待评队列只增不减（2026-11-03）** | `ORDER BY attempts ASC, published_at DESC` → 同 attempts 时永远取最新，旧条目持续饿死（线上 pending 394 条） | 改为 `published_at ASC`（最旧优先）；内存版与 D1 版必须同步 |
+| **D1 写入打满 subrequest** | 扩源后一轮要写 200+ 条 + 14 源快照，逐条 `prepare().run()` = 200+ 次往返 | 写入走 `db.batch()`（官方 limits：整批计 1 个 query；内部上限 1,000/次） |
+| **本地 E2E 夹具跟不上源列表** | 源从 6 扩到 14 后，未覆盖的 host 全被当 network 失败 → 「A6 好源仍为 ok」等断言全线失败 | 上游替身**逐个 host 覆盖**；新增源时必须同步加夹具（这类失败最易被误读成产品 bug） |
+| **magpie 网关下线（2026-11-03）** | trycloudflare 临时隧道到期（HTTP 000）→ 评分全失败 | **五个产品共用同一网关**，需重起 tunnel 并同步 `MAGPIE_BASE_URL`；抓取侧不受影响 |
 
 ## 5. 环境约束（本沙箱）
 
@@ -97,13 +109,14 @@ product5/
 ## 5.1 猜测 vs 已验证（严格分开）
 
 **已验证（有证据）**
-- 6 源在真环境全部可抓：hn 20 / hf-blog 40 / arxiv 40 / simonw 30 / ithome 40 / sspai 10，180 条/轮
+- **14 源在真环境全部可抓**（2026-11-03 实测）：openai / deepmind / google-ai / aws-ml / nvidia / arxiv / hn / simonw /
+  techcrunch-ai / importai / marktechpost / mit-tech-review / ithome / sspai，**195 条/轮、0 失败源**
 - 跨请求去重生效：连打两次 `/api/feed` → 180 新增 → 180 判重
 - 真实评分 60 条零失败（magpie `auto/minimax-m3.1-flash`，prompt `score-v1`）
 - 阈值标定：70 → Precision 100% / Recall 77.3% / F1 0.872（50 条标签 × 60 条真实评分）
 - Cron 已注册（`dist/ssr/wrangler.json` 的 `triggers.crons` 三条）
 - 单源配额生效：27 条过阈值 → 入选 9 条、让位 18 条；不设配额时 top5 全为 arxiv
-- 本地 E2E 22/22、单测 107/107、typecheck 0 error、文档 0 断链
+- 本地 E2E 31/31、单测 116/116、typecheck 0 error、文档 0 断链
 
 **未验证 / 待人确认**
 - **50 条评测标签是 AI 初标，非人工标注** —— 阈值数字的可靠性受此限制（流程可复核）
@@ -137,8 +150,8 @@ product5/
 cd product5
 npm install --ignore-scripts
 npm run typecheck && npm test && npm run build
-npm run e2e:local                                   # 22 项（接口/SSR 级，本机可跑）
-npm run e2e:browser                                 # 18 项（浏览器交互级，需出网；可加 PROXY=… BASE=…）
+npm run e2e:local                                   # 27 项（接口/SSR 级，本机可跑）
+npm run e2e:browser                                 # 19 项（浏览器交互级，需出网；可加 PROXY=… BASE=… TOKEN=…）
 npm run eval                                       # 阈值标定（需 eval/scores.json）
 node scripts/deploy.mjs --secrets .secrets.json     # 构建→迁移→部署→探针
 node scripts/deploy.mjs --probe-only                # 只验线上，不重新部署

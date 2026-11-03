@@ -472,12 +472,25 @@ export async function fetchAllFeeds(
 /* ───────────────────────── 源健康（D10） ───────────────────────── */
 
 /**
- * 三级健康：ok（正常）/ degraded（有错但拿到条目，或条数偏少）/ broken（彻底失败）。
- * 条数骤降由调用方传入 `baselineCount` 判定（首轮没有 baseline 时只按错误分级）。
+ * 三级健康：ok（正常）/ degraded（真异常：条目骤降）/ broken（彻底失败）。
+ *
+ * ⚠️ 2026-11-03 修正：**「被 maxItems 截断」不等于「源异常」**。
+ * 旧实现把 `truncated` 直接判成 `degraded`，后果是：
+ *   - hf-blog（真实 895 条）只取 40 条 → 被标「异常（条目骤降）」，UI 上像坏源；
+ *   - ithome（真实 60 条）同样被标异常；
+ *   - 审查 A-11 当初的初衷是「源其实有 100 条但只取到 40，要察觉」，
+ *     但**这属于「取样上限」而非「源故障」** —— 两者混为一谈会让健康源天天报警。
+ *
+ * 现在的口径：
+ *   - 抓取成功且条目数正常 → `ok`（无论是否截断；截断是配置行为，不是故障）
+ *   - 抓取成功但条目数**相对基线骤降** → `degraded`（真异常：源开始只给 2 条了）
+ *   - 抓取失败 → `broken`
+ * 截断信息通过 `truncated` 字段透传给调用方（UI 可显示「已取样前 N 条」），不再污染健康等级。
  */
 export function healthOf(
   result: FeedFetchResult,
   baselineCount?: number,
+  opts: { maxItems?: number } = {},
 ): SourceHealth {
   const checkedAt = new Date().toISOString();
   if (!result.ok) {
@@ -490,12 +503,20 @@ export function healthOf(
     };
   }
   const count = result.items.length;
-  // 审查 A-11：发生截断（条目上限 / 响应体上限 / 畸形 XML 提前闭合）时不能判 ok，
-  // 否则「源其实有 100 条但只取到 40」永远察觉不到，baseline 还会被抬到截断值。
-  if (result.truncated) {
-    return { sourceId: result.source.id, level: "degraded", itemCount: count, checkedAt };
-  }
-  if (baselineCount && baselineCount >= 5 && count < baselineCount * 0.4) {
+
+  // 真的「条目骤降」才算 degraded：相对历史基线（≥5 条）跌到 40% 以下。
+  // 注意：截断（truncated）不再参与判定 —— 取样上限是配置行为，不是源故障。
+  //
+  // ⚠️ 2026-11-03 再修一处：参照的 baseline 必须**先封顶到本次配置的取样上限**。
+  // 否则改 maxItems（40 → 15）后，历史 baseline（40）会永久高于新上限（15），
+  // 「15 < 40×0.4」恒成立 → **所有源都被误报 degraded**（实测 arxiv/ithome 立刻中招）。
+  // 也就是说：baseline 记录的是「历史上抓到过多少条」，而取样上限会变 ——
+  // 两者不可直接比较，必须先按当前上限封顶。
+  const cap = opts.maxItems && opts.maxItems > 0 ? opts.maxItems : Number.POSITIVE_INFINITY;
+  const effectiveBaseline =
+    baselineCount === undefined ? undefined : Math.min(baselineCount, cap);
+
+  if (effectiveBaseline !== undefined && effectiveBaseline >= 5 && count < effectiveBaseline * 0.4) {
     return { sourceId: result.source.id, level: "degraded", itemCount: count, checkedAt };
   }
   return { sourceId: result.source.id, level: "ok", itemCount: count, checkedAt };

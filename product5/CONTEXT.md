@@ -9,7 +9,7 @@
 | 阶段 | 状态 | 产物 |
 |---|---|---|
 | 0 接单 | ✅ | 目标 / 范围一句话（§1–§2） |
-| 1 需求对齐 | ✅（多轮 grill + 用户纠偏，详见 §3 演进） | §3 决策记录 D1–D10 + §4 验收标准 A1–A9 |
+| 1 需求对齐 | ✅（多轮 grill + 用户纠偏，详见 §3 演进） | §3 决策记录 D1–D14 + §4 验收标准 A1–A9 |
 | 2 沉淀 Spec | ✅（2026-11-02 第三版定稿：RSS 多源） | 本文档 |
 | 3 拆增量 | ✅（草案） | §8 增量清单（6 个，M0 在增量 1） |
 | 3.5 方案复核 | ✅（2026-11-02 授权「开始实现」） | §9 五行模板；复核报告 `product5/docs/方案复核-2026-11-02.md` |
@@ -19,8 +19,9 @@
 | 4 实现 · 增量 4 | ✅ **完成**（3 Cron 注册 + 日报 6 板块 + 单源配额：27 过阈值→入选 9、让位 18） | `lib/digest.ts` + `lib/daily.ts` + `lib/ingest.ts` + `crons/*` + `/api/digest`；85 单测 + 19 E2E；线上 `bcd0f613` |
 | 4 实现 · 增量 5 | ✅ **完成**（四页签 + 源健康历史 + Markdown 渲染） | `routes/api/sources.ts` + 首页重写；88 单测 + 22 E2E 过 |
 | 4 实现 · 增量 6 | ✅ **完成**（交付文档 + 工作原理 + HANDOFF + 索引收录 + CI 五产品矩阵） | `product5/docs/features/ai-hot-radar/` + `product5/docs/HANDOFF-ai-hot-radar.md`；文档 49 md / 0 断链 |
+| 4 实现 · 增量 7 | ✅ **完成**（2026-11-03：源 6→14 + arXiv 换 API + 健康口径修正 + 评分提速 + 候选窗口修正 + D1 batch 化） | `lib/sources.ts` + `lib/rss.ts` + `lib/store.ts` + `lib/queue.ts` + `routes/api/top.ts` + `crons/*`；**114 单测 + 31 E2E** 过；D12–D14 |
 | 5 交叉对抗审查 | ✅ **完成**（两个独立只读审查：8 阻塞 + 16 非阻塞；阻塞 8/8 修，非阻塞修 15、接受 1） | `product5/docs/审查处置台账-2026-11-02.md`；19 项回归测试 |
-| 6 端到端验证 | ✅ 接口级 27/27 + 浏览器级 18/18 + 线上探针全过；**A8 Cron 真实触发已观测**（每小时 :06 一次、无间断 16h+） | `product5/docs/e2e-evidence/`（含 cron-verification.log） |
+| 6 端到端验证 | ✅ 接口级 31/31 + 浏览器级 19/19（带令牌）+ 线上探针全过；**A8 Cron 真实触发已观测**（每小时 :06 一次、无间断 16h+） | `product5/docs/e2e-evidence/`（含 cron-verification.log） |
 | 7 验收报告与人工 Review | ✅ **完成**（A1–A9 全部达成；A9 的 CPU 直接读数仍标为估算） | `product5/docs/验收报告-2026-11-02.md` |
 
 ## 作品集定位（能力增量轴）
@@ -76,6 +77,18 @@
   单一源会垄断精选。固定规则：**同一源最多占精选的 1/3**（`topN=12 → 每源上限 4`），
   溢出名额顺延给次高分条目；日报同理。实现落 `lib/digest.ts` + `selectTop` 的 quota 参数（增量 4）。
 - **D10 源健康与降级（新增）**：feed 失效是常态而非异常——按「HTTP 非 200 / 解析失败 / 条目数骤降」三级登记源状态并在 UI 可见；单源失败不影响其它源（降级不放大）；错误文案面向用户（沿用③ 401 与失败分开的教训）。
+- **D12 源健康口径修正（新增，2026-11-03）**：「**被 maxItems 截断**」不等于「**源异常**」。
+  旧实现把两者混为一谈 → 真实 895 条的 hf-blog（只取 40）与 60 条的 ithome 天天报 degraded，UI 上像坏源。
+  修正后：只有**真条目骤降**（相对基线 <40%）才 degraded，截断由 `truncated` 字段透传而不污染健康等级。
+- **D13 源列表扩充与「官方源优先」（新增，2026-11-03，用户拍板）**：源从 6 个扩到 **14 个**，
+  定位改为**官方一手来源优先**（openai / deepmind / google-ai / aws-ml / nvidia / arxiv + 社区与媒体），
+  权威度契合四维评分。硬约束（Cloudflare 官方 limits）：Cron **CPU 10ms**、外部 **subrequest 50/次**、
+  内部 D1 **1,000/次**、账号 **5 个 Cron**。因此：`maxItems` 由 40 降到 **15**（实测解析耗时随条目数线性增长、
+  与文档大小几乎无关），D1 写入改走 `db.batch()`（整批计 1 个 query）。
+- **D14 arXiv 端点失效与替代（新增，2026-11-03）**：`rss.arxiv.org/rss/cs.AI` 上游已失效
+  （返回 892B 空壳、0 个 `<item>`，cs.CL / cs.LG 同样）→ 改用官方 Atom API
+  `export.arxiv.org/api/query?search_query=cat:cs.AI&...`（实测 40 条 / 日期齐 / 摘要 40/40）。
+  同批移除 **hf-blog**：该 feed 不提供任何摘要（实测 0/40），预筛必然全丢、占库存零贡献。
 
 ## 4. 验收标准（写死）
 
@@ -103,16 +116,25 @@
 **已验证**
 - X 数据获取的墙（session 层 / 免费 API 无 search / CF 拦截实证）——`product5/docs/方案复核-2026-11-02.md` B1–B3 + 附录一~三，逐条实测。
 - Workers 无浏览器内核（HTML SPA 抓不到）；**RSS 是结构化契约，不受此限**。
-- Workers Free 限额：CPU 10ms（含 Cron）、subrequest 50/次、Cron 5 个/账号、requests 10 万/天（官方 Limits 2026-10-29 版）。
+- Workers Free 限额（官方 Limits 2026-10-29/30 版）：**CPU 10ms**（含 Cron）、**外部 subrequest 50/次**、
+  **内部服务 subrequest 1,000/次**、**D1 每次 Worker 调用 50 次查询（`db.batch()` 整批计 1 次）**、
+  Cron **5 个/账号**、requests 10 万/天、D1 每日 500 万行读 / 10 万行写。
+- **解析耗时实测**：feed 解析耗时与**文档大小几乎无关**，与**实际解析的条目数**近似线性
+  （14 源在 maxItems=15 时合计 ≈19ms，maxItems=40 时 ≈35ms）→ `maxItems` 是 CPU 预算的主旋钮。
+- **arXiv RSS 端点已失效**（2026-11-03 实测：892B 空壳、0 个 `<item>`，cs.CL/cs.LG 同样）；
+  官方 Atom API 正常（40 条 / 日期齐 / 摘要 40/40）。
+- **hf-blog feed 不提供摘要**（0/40 条有 description）→ 预筛必然全丢，已从源列表移除。
 
 **假设（未经证实）**
-- D4 默认源列表中的 feed URL 全部真实可用 —— **M0 逐个实测**，失效即替换（列表可配置）。
-- Workers Free 的 CPU/subrequest 预算支撑「单次抓 3–5 个 feed + 小批评分」—— A9 实测。
-- D1 免费日额度、D1 是否计入 subrequest —— 实现前查官方文档核实。
+- Workers Free 的 CPU 预算支撑「14 源 × 15 条 + 30 条评分」—— 已按官方限额设计（batch 化 + maxItems=15），
+  但**实际 CPU 读数未取**（需 Dashboard/observability）；更强的证据是 cron 连续无失败触发。
+- D1 免费日额度是否够用 —— 需盯 Dashboard。
 
 **待确认（需人工回答）**
 - [x] M0 真机验证 → 已通过代理通道完成（`product5/docs/deploy-ai-hot-radar.md` §2）：6/6 源 200、180 条真实数据、无失败
-- [x] 源列表范围：6 源全部实测可用（hn/hf-blog/arxiv/simonw/ithome/sspai），`verified` 已回填
+- [x] 源列表范围：初版 6 源实测可用（hn/hf-blog/arxiv/simonw/ithome/sspai），
+  `verified` 已回填 → **2026-11-03 扩充为 14 源并全部实测可用**（arXiv 换 Atom API、移除 hf-blog），
+  `verified` 已回填
 - [ ] Cron 频率确认（默认每 1–2 小时抓取 + 每日日报；增量 4 配置时定）（负责人：用户）
 - [ ] 评测集**复核**：50 条标签为 agent 初标（`product5/eval/labels.json`），请复核并修正误标；改后重跑 `npm run eval` 即更新阈值（负责人：用户）
 - [ ] A9 的 CPU 直接读数（dashboard/observability；subrequest 与墙钟已实测）（负责人：下个会话）

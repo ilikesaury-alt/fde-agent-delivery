@@ -40,7 +40,11 @@ export const GET = defineHandler(async (c) => {
     return jsonResponse(400, { error: "未匹配到任何订阅源，请检查 src 参数。" });
   }
 
-  const maxItems = intEnv(env.FEED_MAX_ITEMS, 40);
+  // maxItems 默认 15（2026-11-03 从 40 降到 15）：
+  //   Cron 的 CPU 预算只有 10ms（Workers Free），而实测解析耗时随**条目数**线性增长
+  //   （与文档大小几乎无关）—— 14 源在 maxItems=15 时合计 ≈19ms，maxItems=40 时 ≈35ms。
+  //   手动接口与 Cron 共用同一默认值（HANDOFF 纪律 4：手动与定时不得分叉）。
+  const maxItems = intEnv(env.FEED_MAX_ITEMS, 15);
   const timeoutMs = intEnv(env.FEED_TIMEOUT_MS, 12_000);
   const limit = limitParam ? intEnv(limitParam, maxItems) : maxItems;
 

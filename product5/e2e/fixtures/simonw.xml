@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  E2E 夹具：Atom feed。
+
+  两条目刻意这样设计：
+   1. 一条与 HN 夹具**同链接**（wikihack.netlify.app）→ 验证跨源去重（A2）
+   2. 一条独有链接 → 验证「保留先出现者」
+-->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Simon Willison（E2E 夹具）</title>
+  <id>tag:simonwillison.net,2026:blog</id>
+  <updated>2026-11-02T06:00:00Z</updated>
+  <entry>
+    <title>Wikihack 跨源重复条目（用于验证 A2 去重）</title>
+    <link rel="alternate" type="text/html" href="https://wikihack.netlify.app"/>
+    <id>urn:simonw:dup-1</id>
+    <updated>2026-11-02T05:30:00Z</updated>
+    <summary type="html">&lt;p&gt;与 HN 源同一篇文章，应被去重&lt;/p&gt;</summary>
+  </entry>
+  <entry>
+    <title>Simon 独有条目：E2E 夹具</title>
+    <link href="https://simonwillison.net/e2e-fixture/"/>
+    <id>urn:simonw:unique-2</id>
+    <published>2026-11-02T04:15:00Z</published>
+    <summary>独立条目，应保留。</summary>
+  </entry>
+</feed>

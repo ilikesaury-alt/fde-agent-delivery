@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  E2E 夹具：最小合法 Atom feed（每个源一条 + 摘要够长）。
+
+  用途：源列表 2026-11-03 扩充到 14 个后，本地 E2E 的上游替身必须**逐个 host 覆盖**，
+  否则未覆盖的源会被判为 network 失败 → 「A6 好源仍为 ok」等断言全线失败。
+-->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>少数派（E2E 夹具）</title>
+  <id>tag:sspai.com,2026:feed</id>
+  <updated>2026-11-02T06:00:00Z</updated>
+  <entry>
+    <title>少数派 独有条目：E2E 夹具</title>
+    <link rel="alternate" type="text/html" href="https://sspai.com/feede2e-fixture"/>
+    <id>urn:sspai:fixture-1</id>
+    <published>2026-11-02T05:30:00Z</published>
+    <summary>E2E 夹具条目，摘要足够长以通过预筛，不影响本用例。</summary>
+  </entry>
+</feed>

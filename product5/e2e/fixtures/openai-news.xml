@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  E2E 夹具：最小合法 Atom feed（每个源一条 + 摘要够长）。
+
+  用途：源列表 2026-11-03 扩充到 14 个后，本地 E2E 的上游替身必须**逐个 host 覆盖**，
+  否则未覆盖的源会被判为 network 失败 → 「A6 好源仍为 ok」等断言全线失败。
+
+  为什么每源都要给夹具：E2E 验证的是「14 个源一起抓、失败隔离、跨源去重」，
+  不是逐个源的内容正确性 —— 所以每个源给一条最小合法条目就够。
+-->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>OpenAI News（E2E 夹具）</title>
+  <id>tag:openai.com,2026:news</id>
+  <updated>2026-11-02T06:00:00Z</updated>
+  <entry>
+    <title>OpenAI 独有条目：E2E 夹具</title>
+    <link rel="alternate" type="text/html" href="https://openai.com/index/e2e-fixture"/>
+    <id>urn:openai:fixture-1</id>
+    <published>2026-11-02T05:30:00Z</published>
+    <summary>E2E 夹具条目，摘要足够长以通过预筛，不影响本用例。</summary>
+  </entry>
+</feed>

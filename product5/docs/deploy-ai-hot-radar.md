@@ -3,6 +3,64 @@
 > 本文档记录部署事实与线上验证状态（唯一真源在 `../CONTEXT.md` 的验收标准；此处只记「做过什么、结果如何」）。
 > 凭据（复用关系）统一登记在 `docs/线上环境速查.md`，本文不回显任何密钥。
 
+## 0.11 源扩充 + 健康口径修正 + 评分提速 · 2026-11-03
+
+| 项 | 值 |
+|---|---|
+| 线上版本 | `ebf7e21d-cf22-47c1-bf5c-c64fa360fbc0`（部署 `2026-11-03T08:34Z`） |
+| 上一版本 | `06836c3b`（同批首次部署，被本批修正） · 再上 `9b69b06c`（UI 令牌层） |
+| 源数 | 6 → **14**（全部实测可用，0 失败源） |
+| 迁移 | `db/migrations/0006_source_expansion.sql`（清理陈旧源 + baseline 封顶） |
+| 测试 | 单测 **116/116** · 本地 E2E **31/31** · 浏览器 E2E **19/19** |
+
+### 触发原因（用户报「数据太少、几个源异常」）
+
+三条**独立**的根因，全部实测定位：
+
+| 现象 | 真因 | 处置 |
+|---|---|---|
+| `arxiv-cs-ai` 连续 7 次失败 | **上游 RSS 端点失效**：`rss.arxiv.org/rss/cs.AI` 返回 892B 空壳（0 个 `<item>`，cs.CL/cs.LG 同样） | 改用官方 Atom API `export.arxiv.org/api/query?search_query=cat:cs.AI&...`（实测 40 条 / 日期齐 / 摘要 40/40） |
+| `hf-blog` / `ithome` 显示 degraded | **误判**：旧实现把「被 maxItems 截断」当「源异常」。hf-blog 真实 895 条、ithome 真实 60 条，都只是被取样到 40 条 | 截断不再污染健康等级；只有**真条目骤降**才 degraded（`lib/rss.ts` healthOf） |
+| 精选只有 12 条、只来自 3 个源 | **候选窗口太窄**：`/api/top` 只取 `limit×3` 条候选，全库 66 条 ≥70 分的条目被挡在候选池外 | 候选窗口提到 `limit×10` |
+
+### 改动清单
+
+- **源列表 6 → 14**（D13，官方源优先）：openai / deepmind / google-ai / aws-ml / nvidia / arxiv（官方一手）
+  + hn / simonw / techcrunch-ai / importai / marktechpost / mit-tech-review（社区与媒体）+ ithome / sspai（中文）。
+  每个都用**真实解析器**（`lib/rss.ts`）实测条目数 / 日期覆盖 / 摘要达标率后才入列。
+- **移除 hf-blog**（D14）：该 feed 不提供任何摘要（实测 0/40 条有 description）→ 预筛必然全丢、占库存零贡献。
+- **maxItems 40 → 15**：实测解析耗时与**条目数**近似线性、与文档大小几乎无关（14 源在 maxItems=15 时 ≈19ms，
+  maxItems=40 时 ≈35ms）—— Cron 的 CPU 预算只有 10ms（Workers Free 官方 limits）。
+- **评分 cron 提速**：批量 10 → 30 条/次，LLM 并发 2 → 5（Workers 同时等待响应的连接上限 6）。
+- **待评队列排序修正**：原 `attempts ASC, published_at DESC` → 同 attempts 时永远取最新，旧条目持续饿死
+  （线上实测 pending 394 条只增不减）；改为 `published_at ASC`（最旧优先）。
+- **D1 写入改 `db.batch()`**：官方 limits —— D1 内部 subrequest 1,000/次、外部 50/次，
+  而 `db.batch()` **整批计 1 个 query**。扩源后一轮要写 200+ 条 + 14 源快照，逐条发会打满预算。
+- **baseline 封顶**：baseline 记的是「历史抓到过多少条」，而 maxItems 会变 → 比较前必须先按当前上限封顶，
+  否则改 maxItems 后「15 < 40×0.4」恒成立 → **全源误报 degraded**（上线首轮实测 arxiv/ithome 中招）。
+- **迁移 0006**：删除 `hf-blog` 快照行（保留 `source_health` 历史——它是「这个源什么时候坏的」的证据），
+  并把存量 baseline 封顶到 15。
+
+### 线上验证
+
+- **14/14 源全 ok，0 失败源**；每轮 **195 条**（原 140 条），去重后 194，墙钟 4.7s。
+- `/api/sources` 返回 14 个源，全部 `lastHealth=ok`、`consecutiveFailures=0`。
+- 浏览器 E2E 19/19：UI 显示「195 条 / 去重后 194」「源健康 14」。
+- 证据：`e2e-evidence/deploy-2026-11-03-v2.log`、`browser-e2e.log`（带令牌 19/19）、`local-e2e.log`（31/31）。
+
+### ⚠️ 外部依赖故障（与本次改动无关）
+
+**magpie LLM 网关已下线**：`strange-healing-manuals-ada.trycloudflare.com` 返回 HTTP 000（连接不通）。
+- 表现：评分全部失败（`error: upstream`，详情「AI 服务暂不可用」），预筛丢弃的条目不受影响。
+- 影响面：**五个产品共用同一个网关** —— 实测产品② 的 `/api/generate` 也同样失败（`generate: failed`）。
+  这是 trycloudflare 临时隧道到期，**不是产品⑤ 的问题**，需重新起 tunnel 并同步 `MAGPIE_BASE_URL`。
+- 处置：抓取侧完全正常（14 源全通、195 条入库）；评分队列会积压，网关恢复后由 cron 自动消化。
+
+### 遗留待办
+
+- **新源尚未进入精选**：新源条目在评分队列里（pending 558 条），网关恢复后自动消化。
+- **CPU 直接读数未取**：A9 仍标估算（需 Dashboard/observability）。
+
 ## 0.10 UI 令牌层重设计 + Markdown 渲染修复上线 · 2026-11-03
 
 | 项 | 值 |
@@ -54,7 +112,7 @@ typecheck 0 error · 单测 107/107 · build 成功 · 本地 E2E 27/27 · 文�
 - **日报阅读体验**：自研轻量 Markdown 渲染（不引 markdown 库）。
   安全取舍：**不用 dangerouslySetInnerHTML**，所有文本走 React 转义；链接 href 走 http/https 白名单校验。
 
-**验证**：typecheck 0 · 单测 107/107（含审查回归 19 项）· 本地 E2E 22/22（含四页签 SSR 断言 + 源健康历史接口）。
+**验证**：typecheck 0 · 单测 107/107（含审查回归 19 项）· 本地 E2E 27/27（含四页签 SSR 断言 + 源健康历史接口）。
 
 ## 0.7 增量 4（Cron + 日报 + 多样性配额）· 2026-11-02
 
