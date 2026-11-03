@@ -19,9 +19,9 @@
 | 4 实现 · 增量 4 | ✅ **完成**（3 Cron 注册 + 日报 6 板块 + 单源配额：27 过阈值→入选 9、让位 18） | `lib/digest.ts` + `lib/daily.ts` + `lib/ingest.ts` + `crons/*` + `/api/digest`；85 单测 + 19 E2E；线上 `bcd0f613` |
 | 4 实现 · 增量 5 | ✅ **完成**（四页签 + 源健康历史 + Markdown 渲染） | `routes/api/sources.ts` + 首页重写；88 单测 + 22 E2E 过 |
 | 4 实现 · 增量 6 | ✅ **完成**（交付文档 + 工作原理 + HANDOFF + 索引收录 + CI 五产品矩阵） | `product5/docs/features/ai-hot-radar/` + `product5/docs/HANDOFF-ai-hot-radar.md`；文档 49 md / 0 断链 |
-| 5 交叉对抗审查 | ⏳ **未做**（产品②③④ 均做过，本产品待补） | — |
-| 6 端到端验证 | 🟡 接口级 22/22 + 浏览器级 18/18 + 线上探针全过；**Cron 真实触发未观测** | `product5/docs/e2e-evidence/` |
-| 7 验收报告与人工 Review | ⏳ **未做** | — |
+| 5 交叉对抗审查 | ✅ **完成**（两个独立只读审查：8 阻塞 + 16 非阻塞；阻塞 8/8 修，非阻塞修 15、接受 1） | `product5/docs/审查处置台账-2026-11-02.md`；19 项回归测试 |
+| 6 端到端验证 | ✅ 接口级 27/27 + 浏览器级 18/18 + 线上探针全过；**A8 Cron 真实触发已观测**（每小时 :06 一次、无间断 16h+） | `product5/docs/e2e-evidence/`（含 cron-verification.log） |
+| 7 验收报告与人工 Review | ✅ **完成**（A1–A9 全部达成；A9 的 CPU 直接读数仍标为估算） | `product5/docs/验收报告-2026-11-02.md` |
 
 ## 作品集定位（能力增量轴）
 

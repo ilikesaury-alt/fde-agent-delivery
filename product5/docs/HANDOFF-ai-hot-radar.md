@@ -3,13 +3,16 @@
 > 面向**下一个开发者会话**：现状、坑、下一步。读完应能直接接着干，不用翻聊天记录。
 > 最后更新：2026-11-02
 >
-> **Status：`ready-for-review`** —— 实现完成、证据齐、已上线；剩余的是「评测标签人工复核」等人做决策的事，
+> **Status：`ready-for-review`** —— 实现完成、证据齐、已上线；**交叉对抗审查已完成**（8 条阻塞全修）、
+> **Cron 真实触发已观测**、线上 ACCESS_TOKEN 已配置；剩余的是「评测标签人工复核」等人做决策的事，
 > 故不用 `complete`。
 
 ## 1. 当前状态（一句话）
 
-**已上线并通过真环境验证**：version `72123c29`，线上 6 源全部可抓（180 条/轮）、180 条真实评分零失败、
+**已上线并通过真环境验证**：version `b8bb63fa`，线上 6 源全部可抓（180 条/轮）、真实评分零失败、
 日报自动生成并落库、四页签 UI 可用；阈值经评测集实测标定为 70（Precision 100% / Recall 77.3%）。
+**三个 Cron 均已观测到真实触发**（抓取每小时 :06 一次、连续 16h+ 无间断；评分每批消化队列 8 条；
+日报 00:30 UTC 自动生成）。
 
 需求口径与全部决策在 [CONTEXT.md](../CONTEXT.md)（只增不改）。交付/原理/部署文档：
 [交付文档](./features/ai-hot-radar/ai-hot-radar-交付文档.md) ·
@@ -100,8 +103,10 @@ product5/
 
 **未验证 / 待人确认**
 - **50 条评测标签是 AI 初标，非人工标注** —— 阈值数字的可靠性受此限制（流程可复核）
-- **CPU 直接读数未取**（A9 只测了 subrequest 6/50 与墙钟 2.7–5s；CPU 需看 Dashboard/observability）
-- **Cron 的真实触发记录未观测**（只验证了注册与手动等价路径；需等到点后查 Dashboard 或 `wrangler tail`）
+- **CPU 直接读数未取**（A9 的 subrequest 39/50 与墙钟 3044ms 是实测；CPU 需看 Dashboard/observability）。
+  但**比 CPU 读数更强的证据是**：cron 已连续 16+ 小时每小时自动触发成功 —— 若超 CPU，Cloudflare 会记 1102 且任务失败
+- ~~Cron 真实触发未观测~~ → **已验证**（2026-11-03）：抓取每���时 :06 一次无间断；评分队列两次采样 +8/-8；日报 00:30 自动生成。
+  证据 `product5/docs/e2e-evidence/cron-verification.log`
 - ~~未做浏览器走查~~ → **已补**：`e2e/browser-e2e.mjs`（Playwright + 真实 Chromium 打线上站点）**18/18 通过** —— 水合、页签点击、分数徽标、折叠展开、日报 Markdown 渲染、外链可点、无 JS 错误、无失败请求。截图 `product5/docs/e2e-evidence/browser-e2e.png`
 
 ## 6. 下一步（按价值排序）
