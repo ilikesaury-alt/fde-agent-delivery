@@ -9,6 +9,15 @@
  *  - **不猜**：日期缺失显示「—」，不填当前时间
  *  - **口径随内容走**：阈值/模型/prompt/配额都写在日报里，读者能核对「为什么是这几条」
  *  - **口径不一致就说**：日报与精选是两份数据，各自标明来源，不假装是同一份
+ *
+ * 视觉纪律（2026-11-03 重设计）：
+ *  - **颜色只从令牌取**：全部用 var(--color-*) / var(--font-*) / var(--radius-*)，
+ *    不再出现内联 slate/emerald/amber 硬编码色值 —— 亮暗两套由 styles.css 的
+ *    令牌层统一覆盖（此前硬编码暗色系 + 白底，导致白底近白字、几乎不可见）
+ *  - **单一强调色**：品牌色只给品牌元素（标题徽标、页签选中、链接、分数徽标），
+ *    语义色只给语义（正常/降级/不可用、错误/警告），不做五彩斑斓
+ *  - **DOM 契约不破**：浏览器 E2E 依赖「刷新按钮是第一个 button」「页签文字」
+ *    「分数徽标为纯数字」「details/summary 折叠」等断言，改结构前先看 e2e/browser-e2e.mjs
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -148,10 +157,17 @@ function fmtEpoch(ms: number | null): string {
   return fmtTime(new Date(ms).toISOString());
 }
 
+/** 源健康三态 → 语义色（ok / degraded / broken） */
 const LEVEL_STYLE: Record<string, string> = {
-  ok: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  degraded: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-  broken: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  ok: "border-[var(--color-ok-line)] bg-[var(--color-ok-soft)] text-[var(--color-ok)]",
+  degraded: "border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] text-[var(--color-warn)]",
+  broken: "border-[var(--color-err-line)] bg-[var(--color-err-soft)] text-[var(--color-err)]",
+};
+
+const LEVEL_DOT: Record<string, string> = {
+  ok: "bg-[var(--color-ok)]",
+  degraded: "bg-[var(--color-warn)]",
+  broken: "bg-[var(--color-err)]",
 };
 
 const LEVEL_TEXT: Record<string, string> = {
@@ -167,7 +183,8 @@ function levelText(level: string | null): string {
 
 /* ────────────────── 轻量 Markdown 渲染 ────────────────── */
 /* 日报是我们自己生成的固定结构，语法可控 → 不引 markdown 库（省依赖、省体积、少一类 XSS 面）。
-   注意：所有文本都经过 React 转义（不用 dangerouslySetInnerHTML），链接 href 走白名单校验。 */
+   注意：所有文本都经过 React 转义（不用 dangerouslySetInnerHTML），链接 href 走白名单校验。
+   排版样式由 styles.css 的 .doc 承担（标题衬线、正文无衬线、链接/引用/列表统一）。 */
 
 function safeHref(url: string): string | null {
   try {
@@ -178,31 +195,24 @@ function safeHref(url: string): string | null {
   }
 }
 
-function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-  // 依次处理 **[粗体链接](url)** 与 [链接](url)
+function renderLinks(text: string, keyPrefix: string): React.ReactNode[] {
+  // 依次处理 [链接](url)；粗体由外层 renderInline 负责
   const nodes: React.ReactNode[] = [];
-  const re = /(\*\*)?\[([^\]]+)\]\(([^)]+)\)(\*\*)?/g;
+  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index));
-    const href = safeHref(m[3] ?? "");
-    const bold = Boolean(m[1] && m[4]);
-    const inner = m[2] ?? "";
+    const href = safeHref(m[2] ?? "");
+    const inner = m[1] ?? "";
     nodes.push(
       href ? (
-        <a
-          key={`${keyPrefix}-a${i}`}
-          href={href}
-          target="_blank"
-          rel="noreferrer noopener"
-          className={bold ? "font-semibold text-sky-300 hover:underline" : "text-sky-300 hover:underline"}
-        >
+        <a key={`${keyPrefix}-a${i}`} href={href} target="_blank" rel="noreferrer noopener">
           {inner}
         </a>
       ) : (
-        <span key={`${keyPrefix}-t${i}`} className="text-slate-400">
+        <span key={`${keyPrefix}-t${i}`} className="text-[var(--color-ink-3)]">
           {inner}
         </span>
       ),
@@ -214,19 +224,40 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   return nodes;
 }
 
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  // 先按 **纯粗体** 分段（段内可能仍是 **[粗体链接](url)** 的形式），段内再解析链接。
+  // 旧实现只认「粗体包裹的链接」，日报概览里的 **180** 这类纯粗体会带星号原样显示。
+  const nodes: React.ReactNode[] = [];
+  const boldRe = /\*\*(.+?)\*\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = boldRe.exec(text)) !== null) {
+    if (m.index > last) nodes.push(...renderLinks(text.slice(last, m.index), `${keyPrefix}-t${i}`));
+    nodes.push(
+      <strong key={`${keyPrefix}-b${i}`}>{renderLinks(m[1] ?? "", `${keyPrefix}-bi${i}`)}</strong>,
+    );
+    last = m.index + m[0].length;
+    i++;
+  }
+  if (last < text.length) nodes.push(...renderLinks(text.slice(last), `${keyPrefix}-t${i}`));
+  return nodes;
+}
+
 function renderMarkdown(md: string): React.ReactNode {
   const lines = md.split("\n");
   const out: React.ReactNode[] = [];
-  let list: string[] = [];
+  let list: Array<{ main: string; sub?: string }> = [];
   let inCode = false;
 
   const flushList = (key: string) => {
     if (list.length === 0) return;
     out.push(
-      <ul key={key} className="my-1 list-disc space-y-1 pl-5">
+      <ul key={key}>
         {list.map((li, idx) => (
-          <li key={idx} className="text-sm leading-relaxed text-slate-300">
-            {renderInline(li, `${key}-${idx}`)}
+          <li key={idx}>
+            {renderInline(li.main, `${key}-${idx}`)}
+            {li.sub ? <span className="doc-sub">{renderInline(li.sub, `${key}-${idx}-s`)}</span> : null}
           </li>
         ))}
       </ul>,
@@ -245,8 +276,8 @@ function renderMarkdown(md: string): React.ReactNode {
     }
     if (inCode) {
       out.push(
-        <pre key={key} className="my-1 overflow-auto rounded bg-slate-900/80 px-2 py-1 text-xs text-slate-400">
-          {line}
+        <pre key={key}>
+          <code>{line}</code>
         </pre>,
       );
       return;
@@ -254,33 +285,32 @@ function renderMarkdown(md: string): React.ReactNode {
 
     if (line.startsWith("# ")) {
       flushList(`${key}-h1`);
-      out.push(
-        <h1 key={key} className="mb-2 text-lg font-semibold text-slate-100">
-          {renderInline(line.slice(2), key)}
-        </h1>,
-      );
+      out.push(<h1 key={key}>{renderInline(line.slice(2), key)}</h1>);
       return;
     }
     if (line.startsWith("## ")) {
       flushList(`${key}-h2`);
-      out.push(
-        <h2 key={key} className="mt-4 mb-1 border-b border-slate-800 pb-1 text-sm font-semibold text-emerald-300">
-          {renderInline(line.slice(3), key)}
-        </h2>,
-      );
+      out.push(<h2 key={key}>{renderInline(line.slice(3), key)}</h2>);
+      return;
+    }
+    if (line.startsWith("### ")) {
+      flushList(`${key}-h3`);
+      out.push(<h3 key={key}>{renderInline(line.slice(4), key)}</h3>);
       return;
     }
     if (line.startsWith("> ")) {
       flushList(`${key}-q`);
-      out.push(
-        <p key={key} className="my-1 rounded border-l-2 border-amber-500/50 bg-amber-500/5 px-2 py-1 text-xs text-amber-200">
-          {renderInline(line.slice(2), key)}
-        </p>,
-      );
+      out.push(<blockquote key={key}>{renderInline(line.slice(2), key)}</blockquote>);
       return;
     }
     if (line.startsWith("- ")) {
-      list.push(line.slice(2));
+      list.push({ main: line.slice(2) });
+      return;
+    }
+    // 列表续行（缩进两格的「来源 · 时间」）：并入上一条列表项作为次行，不另起段落
+    if (/^\s{2,}\S/.test(line) && list.length > 0) {
+      const prev = list[list.length - 1];
+      if (!prev.sub) prev.sub = line.trim();
       return;
     }
     if (line.trim() === "") {
@@ -289,11 +319,7 @@ function renderMarkdown(md: string): React.ReactNode {
     }
     // 其它（正文行）
     flushList(`${key}-p`);
-    out.push(
-      <p key={key} className="my-0.5 text-sm leading-relaxed text-slate-300">
-        {renderInline(line, key)}
-      </p>,
-    );
+    out.push(<p key={key}>{renderInline(line, key)}</p>);
   });
   flushList("l-end");
   return out;
@@ -446,16 +472,56 @@ export default function IndexPage() {
   );
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 text-slate-100">
-      <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight">AI 资讯雷达</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          定时聚合多源 AI 资讯 → 评分精选 → 每日日报。阈值由评测集标定，源健康全程可见。
-        </p>
+    <main className="mx-auto max-w-6xl px-5 py-7 sm:px-6">
+      {/* ── 页头 ── */}
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--color-brand-soft)] text-[var(--color-brand)]"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="4.5" />
+                <path d="M12 12 L18.2 5.8" />
+              </svg>
+            </span>
+            <h1 className="text-[19px] font-semibold tracking-tight text-[var(--color-ink)]">
+              AI 资讯雷达
+            </h1>
+            <span className="rounded-full border border-[var(--color-brand-line)] bg-[var(--color-brand-soft)] px-2 py-[1px] text-[11px] font-medium text-[var(--color-brand)]">
+              自动运行
+            </span>
+          </div>
+          <p className="mt-1.5 text-[13px] text-[var(--color-ink-2)]">
+            定时聚合多源 AI 资讯 → 评分精选 → 每日日报。阈值由评测集标定，源健康全程可见。
+          </p>
+        </div>
+        <div className="text-[12px] leading-5 text-[var(--color-ink-3)]">
+          {feed ? (
+            <>
+              <div>上次抓取 {fmtTime(feed.fetchedAt)}</div>
+              <div>
+                {feed.counts.fetched} 条 / 去重后 {feed.counts.kept} · {feed.elapsedMs}ms
+              </div>
+            </>
+          ) : (
+            <div>尚未抓取</div>
+          )}
+        </div>
       </header>
 
-      {/* 控制条 */}
-      <section className="mb-5 flex flex-wrap items-center gap-2">
+      {/* ── 控制条 ── */}
+      <section className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-2.5 shadow-[var(--shadow-sm)]">
         <input
           type="password"
           value={token}
@@ -469,50 +535,50 @@ export default function IndexPage() {
             if (e.key === "Enter") refreshAll();
           }}
           placeholder={authEnforced ? "访问令牌（本站已启用鉴权，必填）" : "访问令牌（未启用鉴权可留空）"}
-          className="min-w-[15rem] flex-1 rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm"
+          aria-label="访问令牌"
+          className="min-w-[16rem] flex-1 rounded-md border border-[var(--color-line-strong)] bg-[var(--color-inset)] px-3 py-1.5 text-[13px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-3)]"
         />
         <button
           type="button"
           onClick={refreshAll}
           disabled={loading}
-          className="rounded bg-indigo-600 px-3 py-1.5 text-sm hover:bg-indigo-500 disabled:opacity-50"
+          className="rounded-md bg-[var(--color-brand)] px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-[var(--color-brand-hover)] disabled:opacity-50"
         >
           {loading ? "抓取中…" : "刷新"}
         </button>
-        <span className="text-xs text-slate-500">
-          {feed
-            ? `上次抓取 ${fmtTime(feed.fetchedAt)} · ${feed.counts.fetched} 条 / 去重后 ${feed.counts.kept} · ${feed.elapsedMs}ms`
-            : "尚未抓取"}
-        </span>
       </section>
 
       {error && (
-        <p className="mb-4 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+        <p className="mb-4 rounded-md border border-[var(--color-err-line)] bg-[var(--color-err-soft)] px-3 py-2 text-[13px] text-[var(--color-err)]">
           {error}
         </p>
       )}
 
       {needToken && (
-        <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+        <p className="mb-4 rounded-md border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-3 py-2 text-[13px] text-[var(--color-warn)]">
           本站已启用访问令牌：请在上方输入令牌后点「刷新」（或按回车）。令牌只保存在你的浏览器本地。
         </p>
       )}
 
-      {/* 页签 */}
-      <nav className="mb-5 flex gap-1 border-b border-slate-800">
+      {/* ── 页签 ── */}
+      <nav className="mb-5 flex gap-1 border-b border-[var(--color-line)]">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`rounded-t px-3 py-1.5 text-sm transition ${
+            className={`-mb-px border-b-2 px-3 py-2 text-[13px] transition-colors ${
               tab === t.id
-                ? "border-b-2 border-emerald-400 text-emerald-300"
-                : "text-slate-400 hover:text-slate-200"
+                ? "border-[var(--color-brand)] font-medium text-[var(--color-brand)]"
+                : "border-transparent text-[var(--color-ink-2)] hover:text-[var(--color-ink)]"
             }`}
           >
             {t.label}
-            {t.badge ? <span className="ml-1 text-xs text-slate-500">{t.badge}</span> : null}
+            {t.badge ? (
+              <span className="ml-1.5 text-[11px] tabular-nums text-[var(--color-ink-3)]">
+                {t.badge}
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>
@@ -527,10 +593,10 @@ export default function IndexPage() {
                   key={d.date}
                   type="button"
                   onClick={() => void openDigest(d.date)}
-                  className={`rounded border px-2 py-0.5 text-xs ${
+                  className={`rounded-full border px-2.5 py-[3px] text-[12px] transition-colors ${
                     digestDate === d.date
-                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                      : "border-slate-700 text-slate-400 hover:border-slate-500"
+                      ? "border-[var(--color-brand-line)] bg-[var(--color-brand-soft)] font-medium text-[var(--color-brand)]"
+                      : "border-[var(--color-line)] text-[var(--color-ink-2)] hover:bg-[var(--color-hover)]"
                   }`}
                 >
                   {d.date}（{d.selected} 条）
@@ -539,13 +605,13 @@ export default function IndexPage() {
             </div>
           )}
           {digest?.digest ? (
-            <article className="rounded border border-slate-800 bg-slate-900/30 px-4 py-3">
-              {renderMarkdown(digest.digest.markdown)}
+            <article className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-sm)]">
+              <div className="doc">{renderMarkdown(digest.digest.markdown)}</div>
             </article>
           ) : (
-            <p className="text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 py-12 text-center text-[13px] text-[var(--color-ink-3)]">
               {digest?.message ?? "还没有生成过日报（每天 00:30 UTC 自动生成）。"}
-            </p>
+            </div>
           )}
         </section>
       )}
@@ -554,37 +620,46 @@ export default function IndexPage() {
       {tab === "top" && (
         <section>
           {top && (
-            <p className="mb-3 text-xs text-slate-500">
-              阈值 <span className="text-amber-300">{top.threshold}</span>（评测集标定：Precision 100% / Recall
-              77.3%）· 四维加权：相关性 0.4 / 新颖性 0.2 / 实用度 0.2 / 权威度 0.2 · 理由可核验，不黑盒
-            </p>
+            <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-inset)] px-3.5 py-2.5 text-[12px] leading-5 text-[var(--color-ink-2)]">
+              <span className="font-medium text-[var(--color-ink)]">入选阈值 </span>
+              <span className="score-badge text-[var(--color-warn)]">{top.threshold}</span>
+              <span className="text-[var(--color-ink-3)]">
+                {" "}
+                · 评测集标定：Precision 100% / Recall 77.3%
+              </span>
+              <div className="mt-0.5 text-[var(--color-ink-3)]">
+                四维加权：相关性 0.4 / 新颖性 0.2 / 实用度 0.2 / 权威度 0.2 · 理由可核验，不黑盒
+              </div>
+            </div>
           )}
           {top && top.items.length > 0 ? (
             <ul className="space-y-2">
               {top.items.map((item) => (
                 <li
                   key={item.contentKey}
-                  className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+                  className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-line-strong)]"
                 >
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-mono text-amber-200">
+                  <div className="flex items-start gap-3">
+                    <span className="score-badge mt-[1px] shrink-0 rounded-md border border-[var(--color-brand-line)] bg-[var(--color-brand-soft)] px-2 py-[3px] text-[13px] text-[var(--color-brand)]">
                       {item.total}
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       {safeHref(item.link) ? (
                         <a
                           href={safeHref(item.link)!}
                           target="_blank"
                           rel="noreferrer noopener"
-                          className="text-sm text-sky-300 hover:underline"
+                          className="text-[14px] font-medium text-[var(--color-ink)] underline-offset-2 transition-colors hover:text-[var(--color-brand)] hover:underline"
                         >
                           {item.title}
                         </a>
                       ) : (
-                        <span className="text-sm text-slate-400">{item.title}（链接不安全，已禁用）</span>
+                        <span className="text-[14px] text-[var(--color-ink-3)]">
+                          {item.title}（链接不安全，已禁用）
+                        </span>
                       )}
-                      <p className="mt-0.5 text-xs text-slate-400">
-                        {item.sourceId}
+                      <p className="mt-1 text-[12px] leading-5 text-[var(--color-ink-3)]">
+                        <span className="font-medium text-[var(--color-ink-2)]">{item.sourceId}</span>
                         {item.publishedAt ? ` · ${fmtEpoch(item.publishedAt)}` : ""}
                         {item.reason ? ` · ${item.reason}` : ""}
                       </p>
@@ -594,7 +669,9 @@ export default function IndexPage() {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">还没有达到阈值的条目（评分队列可能仍在跑）。</p>
+            <div className="rounded-lg border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 py-12 text-center text-[13px] text-[var(--color-ink-3)]">
+              还没有达到阈值的条目（评分队列可能仍在跑）。
+            </div>
           )}
         </section>
       )}
@@ -602,34 +679,42 @@ export default function IndexPage() {
       {/* ── 历史 ── */}
       {tab === "history" && (
         <section>
-          <p className="mb-3 text-xs text-slate-500">
+          <p className="mb-3 text-[12px] text-[var(--color-ink-3)]">
             已入库条目（跨请求去重后）· 按发布时间倒序 · 只读库、不触网
           </p>
           {items && items.items.length > 0 ? (
-            <ul className="space-y-1.5">
-              {items.items.map((item) => (
-                <li key={item.contentKey} className="rounded border border-slate-800 bg-slate-900/30 px-3 py-2">
-                  {safeHref(item.link) ? (
-                    <a
-                      href={safeHref(item.link)!}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="text-sm text-sky-300 hover:underline"
-                    >
-                      {item.title}
-                    </a>
-                  ) : (
-                    <span className="text-sm text-slate-400">{item.title}（链接不安全，已禁用）</span>
-                  )}
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {item.sourceId} · 发布 {fmtEpoch(item.publishedAt)} · 首见{" "}
-                    {fmtEpoch(item.firstSeenAt)} · 最近见 {fmtEpoch(item.lastSeenAt)}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            <div className="overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
+              <ul className="divide-y divide-[var(--color-line)]">
+                {items.items.map((item) => (
+                  <li key={item.contentKey} className="px-3.5 py-2.5 transition-colors hover:bg-[var(--color-hover)]">
+                    {safeHref(item.link) ? (
+                      <a
+                        href={safeHref(item.link)!}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-[13.5px] font-medium text-[var(--color-ink)] underline-offset-2 transition-colors hover:text-[var(--color-brand)] hover:underline"
+                      >
+                        {item.title}
+                      </a>
+                    ) : (
+                      <span className="text-[13.5px] text-[var(--color-ink-3)]">
+                        {item.title}（链接不安全，已禁用）
+                      </span>
+                    )}
+                    <p className="mt-0.5 text-[12px] text-[var(--color-ink-3)]">
+                      <span className="font-medium text-[var(--color-ink-2)]">{item.sourceId}</span>
+                      {" · "}
+                      发布 {fmtEpoch(item.publishedAt)} · 首见 {fmtEpoch(item.firstSeenAt)} · 最近见{" "}
+                      {fmtEpoch(item.lastSeenAt)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : (
-            <p className="text-sm text-slate-500">库里还没有条目。</p>
+            <div className="rounded-lg border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 py-12 text-center text-[13px] text-[var(--color-ink-3)]">
+              库里还没有条目。
+            </div>
           )}
         </section>
       )}
@@ -637,92 +722,108 @@ export default function IndexPage() {
       {/* ── 源健康 ── */}
       {tab === "sources" && (
         <section>
-          <p className="mb-3 text-xs text-slate-500">
+          <p className="mb-3 text-[12px] text-[var(--color-ink-3)]">
             订阅源状态与历史（feed 失效是常态，因此保留历史以便判断「该重试还是该换源」）
           </p>
           {sources && sources.sources.length > 0 ? (
-            <ul className="space-y-2">
-              {sources.sources.map((s) => (
-                <li key={s.id} className="rounded border border-slate-800 bg-slate-900/30 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-sm">{s.name}</span>
-                        <span className="rounded border border-slate-600 px-1 text-[10px] uppercase text-slate-400">
-                          {s.lang}
-                        </span>
-                        {!s.verified && (
-                          <span className="rounded border border-amber-600/40 bg-amber-500/10 px-1 text-[10px] text-amber-300">
-                            待 M0 实测
+            <div className="overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
+              <ul className="divide-y divide-[var(--color-line)]">
+                {sources.sources.map((s) => (
+                  <li key={s.id} className="px-3.5 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`status-dot mt-[3px] ${LEVEL_DOT[s.lastHealth ?? ""] ?? LEVEL_DOT.ok}`}
+                          />
+                          <span className="text-[14px] font-medium text-[var(--color-ink)]">{s.name}</span>
+                          <span className="rounded border border-[var(--color-line)] px-1 text-[10px] uppercase text-[var(--color-ink-3)]">
+                            {s.lang}
+                          </span>
+                          {!s.verified && (
+                            <span className="rounded border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-1.5 py-[1px] text-[10px] text-[var(--color-warn)]">
+                              待 M0 实测
+                            </span>
+                          )}
+                          {s.consecutiveFailures > 1 && (
+                            <span className="rounded border border-[var(--color-err-line)] bg-[var(--color-err-soft)] px-1.5 py-[1px] text-[10px] text-[var(--color-err)]">
+                              连续失败 {s.consecutiveFailures} 次
+                            </span>
+                          )}
+                        </div>
+                        {safeHref(s.url) ? (
+                          <a
+                            href={safeHref(s.url)!}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="mt-1 block truncate text-[12px] text-[var(--color-ink-3)] underline-offset-2 transition-colors hover:text-[var(--color-ink-2)] hover:underline"
+                          >
+                            {s.url}
+                          </a>
+                        ) : (
+                          <span className="mt-1 block truncate text-[12px] text-[var(--color-ink-3)]">
+                            {s.url}
                           </span>
                         )}
-                        {s.consecutiveFailures > 1 && (
-                          <span className="rounded border border-rose-600/40 bg-rose-500/10 px-1 text-[10px] text-rose-300">
-                            连续失败 {s.consecutiveFailures} 次
-                          </span>
-                        )}
+                        <p className="mt-0.5 text-[12px] text-[var(--color-ink-3)]">
+                          最近检查 {fmtEpoch(s.lastCheckedAt)} · 条目 {s.lastItemCount}
+                          {s.baselineCount ? ` / 基线 ${s.baselineCount}` : ""}
+                          {s.lastError ? ` · 错误 ${s.lastError}` : ""}
+                        </p>
                       </div>
-                      {safeHref(s.url) ? (
-                        <a
-                          href={safeHref(s.url)!}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="block truncate text-xs text-slate-500 hover:text-slate-300"
-                        >
-                          {s.url}
-                        </a>
-                      ) : (
-                        <span className="block truncate text-xs text-slate-500">{s.url}</span>
-                      )}
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        最近检查 {fmtEpoch(s.lastCheckedAt)} · 条目 {s.lastItemCount}
-                        {s.baselineCount ? ` / 基线 ${s.baselineCount}` : ""}
-                        {s.lastError ? ` · 错误 ${s.lastError}` : ""}
-                      </p>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-[2px] text-[11px] ${
+                          LEVEL_STYLE[s.lastHealth ?? ""] ?? LEVEL_STYLE.ok
+                        }`}
+                      >
+                        {levelText(s.lastHealth)}
+                      </span>
                     </div>
-                    <span
-                      className={`shrink-0 rounded border px-2 py-0.5 text-xs ${
-                        LEVEL_STYLE[s.lastHealth ?? ""] ?? LEVEL_STYLE.ok
-                      }`}
-                    >
-                      {levelText(s.lastHealth)}
-                    </span>
-                  </div>
 
-                  {s.history.length > 0 && (
-                    <details className="mt-2">
-                      <summary className="cursor-pointer text-xs text-slate-500">
-                        抓取历史（最近 {s.history.length} 次）
-                      </summary>
-                      <ul className="mt-1 space-y-0.5">
-                        {s.history.map((h, i) => (
-                          <li key={i} className="flex items-center gap-2 text-xs text-slate-500">
-                            <span
-                              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-                                h.level === "ok"
-                                  ? "bg-emerald-400"
-                                  : h.level === "degraded"
-                                    ? "bg-amber-400"
-                                    : "bg-rose-400"
-                              }`}
-                            />
-                            <span className="w-40 shrink-0">{fmtEpoch(h.checkedAt)}</span>
-                            <span className="w-16 shrink-0">{levelText(h.level)}</span>
-                            <span className="w-20 shrink-0">条目 {h.itemCount}</span>
-                            {h.elapsedMs != null && <span className="w-20 shrink-0">{h.elapsedMs}ms</span>}
-                            {h.error && <span className="font-mono text-rose-300">{h.error}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    {s.history.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[12px] text-[var(--color-ink-3)] transition-colors hover:text-[var(--color-ink-2)]">
+                          抓取历史（最近 {s.history.length} 次）
+                        </summary>
+                        <ul className="mt-1.5 space-y-1">
+                          {s.history.map((h, i) => (
+                            <li
+                              key={i}
+                              className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[var(--color-ink-3)]"
+                            >
+                              <span
+                                className={`status-dot ${
+                                  h.level === "ok"
+                                    ? LEVEL_DOT.ok
+                                    : h.level === "degraded"
+                                      ? LEVEL_DOT.degraded
+                                      : LEVEL_DOT.broken
+                                }`}
+                              />
+                              <span className="w-[7.5rem] shrink-0 tabular-nums">
+                                {fmtEpoch(h.checkedAt)}
+                              </span>
+                              <span className="w-[7rem] shrink-0">{levelText(h.level)}</span>
+                              <span className="w-[4.5rem] shrink-0">条目 {h.itemCount}</span>
+                              {h.elapsedMs != null && (
+                                <span className="w-[4.5rem] shrink-0 tabular-nums">{h.elapsedMs}ms</span>
+                              )}
+                              {h.error && (
+                                <span className="font-mono text-[var(--color-err)]">{h.error}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : (
-            <p className="text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-4 py-12 text-center text-[13px] text-[var(--color-ink-3)]">
               {sources?.message ?? "还没有源状态（先点刷新抓一次）。"}
-            </p>
+            </div>
           )}
         </section>
       )}

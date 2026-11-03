@@ -1,1 +1,318 @@
 @import "tailwindcss";
+
+/* ==========================================================================
+   设计令牌 — Tailwind 4 CSS-first 配置
+   方向：精密工具（precision tool）+ 编辑排版（editorial typesetting）
+   —— 与产品①②③④ 共享设计语言，此处为产品⑤ 独立副本（各产品独立部署，不跨目录引用）
+
+   补这层的直接原因：产品⑤ 原先只有 `@import "tailwindcss"`，页面用暗色系 class
+   （text-slate-100 / border-slate-800）却没有深色底 → 白底近白字，标题几乎不可见。
+   修法不是"再调几个色值"，而是接入令牌层：颜色只从 var(--color-*) 取，亮/暗各一套。
+   ========================================================================== */
+@theme {
+  /* 表面层次 */
+  --color-canvas: #f4f4f5;
+  --color-canvas-subtle: #fafafa;
+  --color-surface: #ffffff;
+  --color-inset: #f8f8f9;
+  --color-hover: #f4f4f5;
+
+  /* 描边 */
+  --color-line: #e4e4e7;
+  --color-line-strong: #d4d4d8;
+
+  /* 文字 */
+  --color-ink: #18181b;
+  --color-ink-2: #52525b;
+  --color-ink-3: #8b8b94;
+
+  /* 强调色（单一） */
+  --color-brand: #4f46e5;
+  --color-brand-hover: #4338ca;
+  --color-brand-soft: #eef2ff;
+  --color-brand-line: #c7d2fe;
+
+  /* 语义色 */
+  --color-ok: #15803d;
+  --color-ok-soft: #f0fdf4;
+  --color-ok-line: #bbf7d0;
+  --color-err: #b91c1c;
+  --color-err-soft: #fef2f2;
+  --color-err-line: #fecaca;
+  --color-warn: #a16207;
+  --color-warn-soft: #fefce8;
+  --color-warn-line: #fde68a;
+
+  /* 字体 */
+  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-doc: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  /* 圆角（按层级递减） */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* 阴影（克制，两级） */
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
+  --shadow-md: 0 1px 3px rgba(24, 24, 27, 0.06),
+    0 8px 24px -8px rgba(24, 24, 27, 0.1);
+
+  /* 动效 */
+  --ease-out-soft: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 暗色模式：覆盖令牌（不写两套 class） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #0e0e10;
+    --color-canvas-subtle: #131316;
+    --color-surface: #17171a;
+    --color-inset: #1c1c20;
+    --color-hover: #212126;
+
+    --color-line: #2a2a30;
+    --color-line-strong: #3a3a42;
+
+    --color-ink: #ededef;
+    --color-ink-2: #a1a1aa;
+    --color-ink-3: #71717a;
+
+    --color-brand: #818cf8;
+    --color-brand-hover: #a5b4fc;
+    --color-brand-soft: #1e1b4b;
+    --color-brand-line: #3730a3;
+
+    --color-ok: #4ade80;
+    --color-ok-soft: #052e16;
+    --color-ok-line: #166534;
+    --color-err: #f87171;
+    --color-err-soft: #2b0f0f;
+    --color-err-line: #7f1d1d;
+    --color-warn: #facc15;
+    --color-warn-soft: #2b2107;
+    --color-warn-line: #713f12;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4),
+      0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ==========================================================================
+   基础层
+   ========================================================================== */
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 键盘焦点统一可见 */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* 减少动效偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ==========================================================================
+   组件层
+   ========================================================================== */
+@layer components {
+  /* 日报正文：标题走衬线（编辑排版），正文走无衬线（工具可读性） */
+  .doc {
+    color: var(--color-ink-2);
+    font-size: 13.5px;
+    line-height: 1.75;
+  }
+
+  .doc h1 {
+    font-family: var(--font-doc);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+    margin: 0 0 4px;
+  }
+
+  .doc h2 {
+    font-family: var(--font-doc);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--color-ink);
+    margin: 26px 0 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .doc h2:first-child {
+    margin-top: 0;
+  }
+
+  .doc h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-ink);
+    margin: 18px 0 6px;
+  }
+
+  .doc p {
+    margin: 0 0 10px;
+  }
+
+  .doc ul,
+  .doc ol {
+    margin: 0 0 14px;
+    padding-left: 1.35em;
+    /* Tailwind preflight 会清掉 list-style，这里显式补回（否则日报列表没有符号） */
+    list-style: disc;
+  }
+
+  .doc ol {
+    list-style: decimal;
+  }
+
+  .doc li {
+    margin-bottom: 5px;
+  }
+
+  /* 列表条目的次行（来源 · 时间）：小一号、弱化、贴紧主行 */
+  .doc li .doc-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--color-ink-3);
+  }
+
+  .doc li::marker {
+    color: var(--color-ink-3);
+  }
+
+  .doc strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
+  .doc a {
+    color: var(--color-brand);
+    text-decoration: none;
+    border-bottom: 1px solid var(--color-brand-line);
+  }
+
+  .doc a:hover {
+    border-bottom-color: var(--color-brand);
+  }
+
+  .doc code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: var(--color-inset);
+    border: 1px solid var(--color-line);
+  }
+
+  .doc pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: var(--color-inset);
+    border: 1px solid var(--color-line);
+    overflow-x: auto;
+    color: var(--color-ink-2);
+  }
+
+  .doc blockquote {
+    margin: 12px 0;
+    padding: 8px 12px;
+    border-left: 2px solid var(--color-brand-line);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    background: var(--color-brand-soft);
+    color: var(--color-ink-2);
+  }
+
+  .doc hr {
+    border: none;
+    border-top: 1px solid var(--color-line);
+    margin: 20px 0;
+  }
+
+  /* 分数徽标：等宽数字，避免分数跳动时宽度抖 */
+  .score-badge {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  /* 源健康状态点 */
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  /* 状态点脉冲（抓取中） */
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.45;
+      transform: scale(0.8);
+    }
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 1s ease-in-out infinite;
+  }
+
+  /* 滚动条 */
+  .scroll-thin {
+    scrollbar-width: thin;
+    overscroll-behavior: contain;
+  }
+
+  .scroll-thin::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 3px solid var(--color-surface);
+  }
+}

@@ -47,7 +47,8 @@ product5/
 │   └── digest.ts                每天 00:30 UTC 生成日报
 ├── routes/api/{health,feed,items,top,score,digest,sources}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment；index.tsx 含自研 Markdown 渲染
-├── test/*.ts                    107 项单测（node --experimental-strip-types；含审查回归 19 项）
+├── styles.css                     设计令牌层（与①–④同构：表面/描边/文字/品牌/语义色 + 亮暗两套）
+├── test/*.ts                      107 项单测（node --experimental-strip-types；含审查回归 19 项）
 ├── eval/                        阈值标定：labels.json + scores.json + run.ts + report.md
 ├── scripts/deploy.mjs           构建 → 迁移 → 部署 → 探针（支持 DEPLOY_PROXY / --probe-only）
 └── e2e/{local-e2e.mjs,d1-shim.mjs,live-m0.mjs,fixtures/}
@@ -80,6 +81,9 @@ product5/
 | 首页没有客户端脚本（页面不响应） | Void 读 `/.vite/manifest.json`，替身剥掉 `.vite` 就 404 | 替身只剥前导斜杠，保留 `.vite/` |
 | 精选被单个源垄断 | `arxiv-cs-ai` 日更 40 篇、权威度天然高 | D11 单源配额（topN 的 1/3），让位给次高分其它源 |
 | 本地 D1 测不出绑定上限 | 本地 SQLite 上限 32766，线上 D1 是 100 | 批量写入按**变量数**切批（items 10 行、scores 9 行） |
+| **白底近白字（上线首版 UI）** | 页面用暗色系 class（text-slate-100）但 body 没有背景色 → 白底上浅灰字几乎不可见 | 2026-11-03 重设计：接入与①–④同构的设计令牌层（styles.css），颜色只从 `var(--color-*)` 取，亮暗各一套；页面内不再出现硬编码色值 |
+| **Markdown 渲染丢粗体/拆散列表** | 旧 renderInline 只认「粗体包裹的链接」，日报里 `**180**` 这类纯粗体带星号原样显示；bullet 的缩进续行（来源 · 时间）被当独立段落 | renderInline 先按 `**…**` 分段再解析链接；续行并入上一条列表项渲染为 `.doc-sub` 次行 |
+| 浏览器 E2E ④ 假阴性 | 旧断言依赖「点击后 600ms 内按钮仍是抓取中」，本地 shim 抓取 2ms 完成 → 必挂 | 改为「轮询到抓取中 **或** 页头抓取统计变化」双凭据（2026-11-03） |
 
 ## 5. 环境约束（本沙箱）
 
