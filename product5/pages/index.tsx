@@ -11,7 +11,7 @@
  *  - **口径不一致就说**：日报与精选是两份数据，各自标明来源，不假装是同一份
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const TOKEN_KEY = "radar_token";
 
@@ -313,81 +313,108 @@ export default function IndexPage() {
   const [sources, setSources] = useState<SourcesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const saved = typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
-    if (saved) setToken(saved);
-  }, []);
+  /** 任一读接口返回 401 → 提示输入令牌（而不是把错误体当数据渲染到崩溃） */
+  const [needToken, setNeedToken] = useState(false);
+  const needTokenRef = useRef(false);
+  const [authEnforced, setAuthEnforced] = useState(false);
 
   const authHeaders = useCallback(
     (tk: string): Record<string, string> => (tk ? { authorization: `Bearer ${tk}` } : {}),
     [],
   );
 
-  const loadFeed = useCallback(
-    async (tk: string) => {
-      setLoading(true);
-      setError(null);
+  /**
+   * 唯一的取数入口：只有 **HTTP 200** 的 body 才会被返回（才可能进 state）。
+   *
+   * 背景（2026-11-03 白屏回归的教训）：配了 ACCESS_TOKEN 后所有读接口返回 401 +
+   * `{error:"…"}`，旧的 `r.json().catch(()=>null)` 只防网络错、不防 4xx JSON 体，
+   * 错误对象被塞进 state → `sources.sources.length` 抛 TypeError → React 水合崩溃 → 白屏。
+   */
+  const fetchJson = useCallback(
+    async <T,>(tk: string, url: string): Promise<T | null> => {
       try {
-        const res = await fetch("/api/feed", { headers: authHeaders(tk) });
-        const body = (await res.json()) as FeedResponse & { error?: string };
-        if (!res.ok) {
-          setError(body.error ?? `请求失败（HTTP ${res.status}）`);
-          setFeed(null);
-          return;
+        const res = await fetch(url, { headers: authHeaders(tk) });
+        if (res.status === 401) {
+          needTokenRef.current = true;
+          setNeedToken(true);
+          return null;
         }
-        setFeed(body);
+        if (!res.ok) return null;
+        needTokenRef.current = false;
+        setNeedToken(false);
+        return (await res.json()) as T;
       } catch {
-        setError("网络异常，请稍后重试。");
-        setFeed(null);
-      } finally {
-        setLoading(false);
+        return null;
       }
     },
     [authHeaders],
   );
 
+  const loadFeed = useCallback(
+    async (tk: string) => {
+      setLoading(true);
+      setError(null);
+      const body = await fetchJson<FeedResponse>(tk, "/api/feed");
+      if (!body) {
+        // 401 时 fetchJson 已把 needToken 置位，这里不叠加网络错误文案
+        if (!needTokenRef.current) setError("抓取失败（网络异常或服务暂不可用），请稍后重试。");
+        setFeed(null);
+      } else {
+        setFeed(body);
+      }
+      setLoading(false);
+    },
+    [fetchJson],
+  );
+
   const loadReadonly = useCallback(
     async (tk: string) => {
-      const h = authHeaders(tk);
       const [topRes, digestRes, itemsRes, sourcesRes] = await Promise.all([
-        fetch("/api/top?limit=30", { headers: h })
-          .then((r) => r.json() as Promise<TopResponse>)
-          .catch(() => null),
-        fetch("/api/digest", { headers: h })
-          .then((r) => r.json() as Promise<DigestResponse>)
-          .catch(() => null),
-        fetch("/api/items?limit=60", { headers: h })
-          .then((r) => r.json() as Promise<ItemsResponse>)
-          .catch(() => null),
-        fetch("/api/sources?history=20", { headers: h })
-          .then((r) => r.json() as Promise<SourcesResponse>)
-          .catch(() => null),
+        fetchJson<TopResponse>(tk, "/api/top?limit=30"),
+        fetchJson<DigestResponse>(tk, "/api/digest"),
+        fetchJson<ItemsResponse>(tk, "/api/items?limit=60"),
+        fetchJson<SourcesResponse>(tk, "/api/sources?history=20"),
       ]);
       if (topRes) setTop(topRes);
       if (digestRes) setDigest(digestRes);
       if (itemsRes) setItems(itemsRes);
       if (sourcesRes) setSources(sourcesRes);
     },
-    [authHeaders],
+    [fetchJson],
   );
 
   const loadDigestList = useCallback(
     async (tk: string) => {
-      const res = await fetch("/api/digest?list=1", { headers: authHeaders(tk) })
-        .then((r) => r.json() as Promise<DigestResponse>)
-        .catch(() => null);
+      const res = await fetchJson<DigestResponse>(tk, "/api/digest?list=1");
       if (res) setDigestList(res.list ?? []);
     },
-    [authHeaders],
+    [fetchJson],
   );
 
+  /** 只跑一次：先取出保存的令牌再用它发请求（避免先用空令牌打一轮 401） */
+  const loadedRef = useRef(false);
   useEffect(() => {
-    void loadFeed(token);
-    void loadReadonly(token);
-    void loadDigestList(token);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    const saved = typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+    const tk = saved ?? "";
+    if (saved) setToken(saved);
+    // 探测鉴权模式（/api/health 公开）：enforced 且没存令牌 → 立刻提示，不等 401
+    void (async () => {
+      try {
+        const res = await fetch("/api/health");
+        if (res.ok) {
+          const body = (await res.json()) as { authMode?: string };
+          if (body.authMode === "enforced") setAuthEnforced(true);
+        }
+      } catch {
+        /* 健康探测失败不影响页面 */
+      }
+    })();
+    void loadFeed(tk);
+    void loadReadonly(tk);
+    void loadDigestList(tk);
+  }, [loadFeed, loadReadonly, loadDigestList]);
 
   const refreshAll = () => {
     void loadFeed(token);
@@ -396,9 +423,7 @@ export default function IndexPage() {
   };
 
   const openDigest = async (date: string) => {
-    const res = await fetch(`/api/digest?date=${date}`, { headers: authHeaders(token) })
-      .then((r) => r.json() as Promise<DigestResponse>)
-      .catch(() => null);
+    const res = await fetchJson<DigestResponse>(token, `/api/digest?date=${date}`);
     if (res?.digest) {
       setDigest(res);
       setDigestDate(date);
@@ -409,9 +434,13 @@ export default function IndexPage() {
     () =>
       [
         { id: "digest" as const, label: "日报", badge: digest?.digest?.date },
-        { id: "top" as const, label: "精选", badge: top ? `${top.count}` : undefined },
-        { id: "history" as const, label: "历史", badge: items ? `${items.count}` : undefined },
-        { id: "sources" as const, label: "源健康", badge: sources ? `${sources.sources.length}` : undefined },
+        { id: "top" as const, label: "精选", badge: top?.count !== undefined ? `${top.count}` : undefined },
+        { id: "history" as const, label: "历史", badge: items?.count !== undefined ? `${items.count}` : undefined },
+        {
+          id: "sources" as const,
+          label: "源健康",
+          badge: sources?.sources?.length ? `${sources.sources.length}` : undefined,
+        },
       ] as Array<{ id: Tab; label: string; badge?: string }>,
     [digest, top, items, sources],
   );
@@ -430,8 +459,16 @@ export default function IndexPage() {
         <input
           type="password"
           value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="访问令牌（未配置 ACCESS_TOKEN 可留空）"
+          onChange={(e) => {
+            const v = e.target.value;
+            setToken(v);
+            // 输入即保存（产品④ 同款）：粘贴一次，之后访问免填
+            if (typeof localStorage !== "undefined") localStorage.setItem(TOKEN_KEY, v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") refreshAll();
+          }}
+          placeholder={authEnforced ? "访问令牌（本站已启用鉴权，必填）" : "访问令牌（未启用鉴权可留空）"}
           className="min-w-[15rem] flex-1 rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm"
         />
         <button
@@ -452,6 +489,12 @@ export default function IndexPage() {
       {error && (
         <p className="mb-4 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
           {error}
+        </p>
+      )}
+
+      {needToken && (
+        <p className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          本站已启用访问令牌：请在上方输入令牌后点「刷新」（或按回车）。令牌只保存在你的浏览器本地。
         </p>
       )}
 
@@ -619,14 +662,18 @@ export default function IndexPage() {
                           </span>
                         )}
                       </div>
-                      <a
-                        href={s.url}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="block truncate text-xs text-slate-500 hover:text-slate-300"
-                      >
-                        {s.url}
-                      </a>
+                      {safeHref(s.url) ? (
+                        <a
+                          href={safeHref(s.url)!}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="block truncate text-xs text-slate-500 hover:text-slate-300"
+                        >
+                          {s.url}
+                        </a>
+                      ) : (
+                        <span className="block truncate text-xs text-slate-500">{s.url}</span>
+                      )}
                       <p className="mt-0.5 text-xs text-slate-500">
                         最近检查 {fmtEpoch(s.lastCheckedAt)} · 条目 {s.lastItemCount}
                         {s.baselineCount ? ` / 基线 ${s.baselineCount}` : ""}

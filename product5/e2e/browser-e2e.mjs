@@ -20,6 +20,7 @@ import { chromium } from "playwright";
 
 const BASE = process.env.BASE ?? "https://ai-hot-radar.ilikesaury.workers.dev";
 const PROXY = process.env.PROXY ?? "";
+const TOKEN = process.env.TOKEN ?? ""; // 预置到 localStorage，测「带令牌」的真实数据渲染
 const TIMEOUT = Number.parseInt(process.env.E2E_TIMEOUT ?? "45000", 10);
 
 const results = [];
@@ -37,6 +38,12 @@ const context = await browser.newContext({
   locale: "zh-CN",
 });
 const page = await context.newPage();
+
+if (TOKEN) {
+  // 在任何页面脚本之前写入 localStorage（与页面 TOKEN_KEY 一致）
+  await context.addInitScript((t) => localStorage.setItem("radar_token", t), TOKEN);
+  console.log(`[browser-e2e] 已预置访问令牌（rad_ 前缀，长度 ${TOKEN.length}）`);
+}
 
 /* 收集页面错误与失败请求 —— 水合失败的典型信号 */
 const consoleErrors = [];
@@ -78,6 +85,24 @@ if (hasRefresh) {
   await page
     .waitForFunction(() => !document.body.innerText.includes("抓取中…"), { timeout: TIMEOUT })
     .catch(() => undefined);
+}
+
+/* ── ④b 白屏回归断言（2026-11-03 线上白屏事故）：无论有无令牌，页面必须渲染且不崩 ──
+ * 无令牌模式：应出现「访问令牌」提示（401 被优雅处理而非崩溃）
+ * 带令牌模式：提示应消失（鉴权通过，401 横幅不应残留）
+ */
+{
+  const hasShell = (await page.locator("h1", { hasText: "AI 资讯雷达" }).count()) > 0;
+  const hint = await page
+    .locator("body")
+    .innerText()
+    .then((t) => t.includes("访问令牌"));
+  const expectHint = !TOKEN;
+  check(
+    `④b 页面不白屏${expectHint ? "且有令牌提示" : "且提示已消失（鉴权通过）"}`,
+    hasShell && hint === expectHint,
+    `壳=${hasShell} · 提示=${hint}（期望 ${expectHint}）`,
+  );
 }
 
 /* ── ⑤ 四个页签可见 ── */
