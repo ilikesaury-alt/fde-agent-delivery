@@ -9,7 +9,7 @@
 
 ## 1. 当前状态（一句话）
 
-**已上线并通过真环境验证**：version `b8bb63fa`，线上 6 源全部可抓（180 条/轮）、真实评分零失败、
+**已上线并通过真环境验证**：version `7088bef7`，线上 6 源全部可抓（180 条/轮）、真实评分零失败、
 日报自动生成并落库、四页签 UI 可用；阈值经评测集实测标定为 70（Precision 100% / Recall 77.3%）。
 **三个 Cron 均已观测到真实触发**（抓取每小时 :06 一次、连续 16h+ 无间断；评分每批消化队列 8 条；
 日报 00:30 UTC 自动生成）。
@@ -47,7 +47,7 @@ product5/
 │   └── digest.ts                每天 00:30 UTC 生成日报
 ├── routes/api/{health,feed,items,top,score,digest,sources}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment；index.tsx 含自研 Markdown 渲染
-├── test/*.ts                    88 项单测（node --experimental-strip-types）
+├── test/*.ts                    107 项单测（node --experimental-strip-types；含审查回归 19 项）
 ├── eval/                        阈值标定：labels.json + scores.json + run.ts + report.md
 ├── scripts/deploy.mjs           构建 → 迁移 → 部署 → 探针（支持 DEPLOY_PROXY / --probe-only）
 └── e2e/{local-e2e.mjs,d1-shim.mjs,live-m0.mjs,fixtures/}
@@ -99,22 +99,28 @@ product5/
 - 阈值标定：70 → Precision 100% / Recall 77.3% / F1 0.872（50 条标签 × 60 条真实评分）
 - Cron 已注册（`dist/ssr/wrangler.json` 的 `triggers.crons` 三条）
 - 单源配额生效：27 条过阈值 → 入选 9 条、让位 18 条；不设配额时 top5 全为 arxiv
-- 本地 E2E 22/22、单测 88/88、typecheck 0 error、文档 0 断链
+- 本地 E2E 22/22、单测 107/107、typecheck 0 error、文档 0 断链
 
 **未验证 / 待人确认**
 - **50 条评测标签是 AI 初标，非人工标注** —— 阈值数字的可靠性受此限制（流程可复核）
+- **前端 401 处理已补**（2026-11-03 白屏回归的教训）：配 ACCESS_TOKEN 后前端若不处理 401 会白屏。
+  已改为 `fetchJson` 统一入口（只有 200 的 body 进 state）+ 鉴权模式感知提示；浏览器 E2E ④b 断言双模式不白屏
 - **CPU 直接读数未取**（A9 的 subrequest 39/50 与墙钟 3044ms 是实测；CPU 需看 Dashboard/observability）。
   但**比 CPU 读数更强的证据是**：cron 已连续 16+ 小时每小时自动触发成功 —— 若超 CPU，Cloudflare 会记 1102 且任务失败
 - ~~Cron 真实触发未观测~~ → **已验证**（2026-11-03）：抓取每���时 :06 一次无间断；评分队列两次采样 +8/-8；日报 00:30 自动生成。
   证据 `product5/docs/e2e-evidence/cron-verification.log`
-- ~~未做浏览器走查~~ → **已补**：`e2e/browser-e2e.mjs`（Playwright + 真实 Chromium 打线上站点）**18/18 通过** —— 水合、页签点击、分数徽标、折叠展开、日报 Markdown 渲染、外链可点、无 JS 错误、无失败请求。截图 `product5/docs/e2e-evidence/browser-e2e.png`
+- ~~未做浏览器走查~~ → **已补**：`e2e/browser-e2e.mjs`（Playwright + 真实 Chromium 打线上站点）
+  **双模式实测（2026-11-03，线上 `7088bef7`）**：带令牌 **19/19**（水合、页签点击、分数徽标、折叠展开、
+  日报 Markdown 渲染、外链可点、无 JS 错误、无失败请求）；无令牌 **13/19** —— 未过的 6 项全是
+  数据类断言（无令牌拿不到数据是预期），关键回归断言 ④b 不白屏 + ⑪ 无 JS 错误均通过。
+  截图 `product5/docs/e2e-evidence/browser-e2e.png`（日志中令牌值已脱敏）
 
 ## 6. 下一步（按价值排序）
 
 1. **评测标签人工复核**（用户）：改 `eval/labels.json` → 重跑 `npm run eval` → 更新阈值 → 同步线上 `DIGEST_THRESHOLD`。
-2. **Cron 触发观测**：等到整点后查 Cloudflare Dashboard 的触发记录 + `npx wrangler tail` 看 `[cron:*]` 日志，
-   确认三个任务都真的跑起来了（这是「自动扫描」这一核心定位的最后一块拼图）。
-3. **作品集索引收录**（README 一览表 / `docs/作品集-总览.md` / `docs/线上环境速查.md`）。
+2. ~~Cron 触发观测~~ → **已验证**（2026-11-03）：抓取每小时 :06 无间断 16h+；评分队列两次采样 +8/-8；
+   日报 00:30 UTC 自动生成。证据 `product5/docs/e2e-evidence/cron-verification.log`。
+3. ~~作品集索引收录~~ → **已完成**（README 一览表 + 产品⑤ 章节 / `docs/作品集-总览.md` / `docs/线上环境速查.md`）。
 4. **源健康可视化增强**：目前历史是纯文字列表，可做成迷你时间线。
 5. **可选**：把「每日推送」（Webhook / 邮件）做成二期；把 `evaluate` 的阈值扫描接进 CI 防漂移。
 

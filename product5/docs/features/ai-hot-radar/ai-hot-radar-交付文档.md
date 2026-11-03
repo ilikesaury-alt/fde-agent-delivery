@@ -85,7 +85,7 @@
 ```bash
 cd product5
 npm run typecheck    # 类型检查
-npm test             # 单元与契约测试：88 项
+npm test             # 单元与契约测试：107 项
 npm run build        # 构建
 npm run e2e:local    # 端到端·接口级（真实构建产物 + 真实 HTTP + 真实 feed 夹具 + SQLite 替身）：22 项
 npm run e2e:browser  # 端到端·浏览器级（Playwright + 真实 Chromium，需出网）：18 项

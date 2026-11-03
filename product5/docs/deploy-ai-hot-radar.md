@@ -19,7 +19,7 @@
 - **日报阅读体验**：自研轻量 Markdown 渲染（不引 markdown 库）。
   安全取舍：**不用 dangerouslySetInnerHTML**，所有文本走 React 转义；链接 href 走 http/https 白名单校验。
 
-**验证**：typecheck 0 · 单测 88/88 · 本地 E2E 22/22（含四页签 SSR 断言 + 源健康历史接口）。
+**验证**：typecheck 0 · 单测 107/107（含审查回归 19 项）· 本地 E2E 22/22（含四页签 SSR 断言 + 源健康历史接口）。
 
 ## 0.7 增量 4（Cron + 日报 + 多样性配额）· 2026-11-02
 
