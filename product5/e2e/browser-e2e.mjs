@@ -76,15 +76,30 @@ check("③ 刷新按钮存在", hasRefresh);
 
 if (hasRefresh) {
   const before = (await refreshBtn.textContent()) ?? "";
+  // 抓取统计（页头「上次抓取 …」行）：每次抓取后时间/耗时必变，作为「抓取真的发生了」的凭据
+  const statsBefore =
+    (await page.locator("body").innerText()).match(/上次抓取[^\n]*/)?.[0] ?? "";
   await refreshBtn.click({ timeout: TIMEOUT });
-  await page.waitForTimeout(600);
-  const during = (await page.locator("button").first().textContent()) ?? "";
-  const reacted = during !== before || during.includes("抓取中");
-  check("④ 点击「刷新」触发 React 状态更新（= 客户端已水合）", reacted, `按钮文案：${before.trim()} → ${during.trim()}`);
-  // 等抓取结束
+  // 本地 shim 抓取毫秒级完成，「抓取中…」可能一闪而过轮询不到 —— 属预期，不算失败；
+  // 此时以抓取统计是否变化判定水合（页签切换断言 ⑥–⑩ 是水合的第二重证据）
+  let sawFetching = false;
+  await page
+    .waitForFunction(() => document.body.innerText.includes("抓取中…"), { timeout: 3000 })
+    .then(() => {
+      sawFetching = true;
+    })
+    .catch(() => undefined);
   await page
     .waitForFunction(() => !document.body.innerText.includes("抓取中…"), { timeout: TIMEOUT })
     .catch(() => undefined);
+  const statsAfter =
+    (await page.locator("body").innerText()).match(/上次抓取[^\n]*/)?.[0] ?? "";
+  const reacted = sawFetching || statsAfter !== statsBefore;
+  check(
+    "④ 点击「刷新」触发 React 状态更新（= 客户端已水合）",
+    reacted,
+    `按钮：${before.trim()} · 抓取中=${sawFetching} · 统计「${statsBefore}」→「${statsAfter}」`,
+  );
 }
 
 /* ── ④b 白屏回归断言（2026-11-03 线上白屏事故）：无论有无令牌，页面必须渲染且不崩 ──
