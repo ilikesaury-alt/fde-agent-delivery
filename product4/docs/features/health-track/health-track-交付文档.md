@@ -81,7 +81,7 @@
 ```bash
 cd product4
 npm run typecheck      # 0 error
-npm test               # 128 项单测
+npm test               # 129 项单测
 npm run build          # 构建 + 产物校验
 npm run verify:local   # 本地整链 21 项（内存 Repo + 假网关，沙箱可跑）
 npm run eval           # 真网关抽取评测：行级准确率 + 红线（需 .secrets.json）

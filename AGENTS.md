@@ -17,7 +17,7 @@
 
 ## 提交前验证基线
 
-- 两产品：`npm run typecheck` + `npm test` + `npm run build` 全过。
+- 五产品：`npm run typecheck` + `npm test` + `npm run build` 全过。
 - 文档引用校验 0 断链。
 - 暂存区无密钥（`.env` / `.secrets.json` / `dist/` 均被 gitignore；`grep` 明文凭据不得命中）。
 

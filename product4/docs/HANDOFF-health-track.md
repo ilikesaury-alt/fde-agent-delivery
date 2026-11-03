@@ -37,7 +37,7 @@ product4/
 │   ├── llm.ts  http.ts  auth.ts  errors.ts
 ├── routes/api/{health,extract,reports,metrics,trends,interpret,ocr}.ts
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment
-├── test/*.ts                    128 项单测（node --experimental-strip-types）
+├── test/*.ts                    129 项单测（node --experimental-strip-types）
 ├── eval/                        真网关评测（抽取 + 红线）
 ├── scripts/{deploy.mjs,local-verify.mjs}
 └── e2e/{live-e2e,live-scan,live-corpus,live-ui}.mjs   经 ego-browser 跑（`live-ocr.mjs` 已随服务端 OCR 下线删除）

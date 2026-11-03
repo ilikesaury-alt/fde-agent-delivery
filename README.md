@@ -13,7 +13,7 @@
 | ④ | **体检指标追踪**（health-track） | https://health-track.ilikesaury.workers.dev | 体检报告 → 结构化指标 → 趋势与异常 → 有依据、不越界的解读 |
 | ⑤ | **AI 资讯雷达**（ai-hot-radar） | https://ai-hot-radar.ilikesaury.workers.dev | 定时聚合多源 RSS → 评分精选 → 每日自动日报 |
 
-**四个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**、⑤ 6 源全可抓（**180 条/轮**）+ 真实评分 **60 条零失败** + 阈值由评测集实测标定（**Precision 100% / Recall 77.3%**）+ 日报自动生成 + 单源配额防垄断（27 条过阈值 → 入选 9 条、让位 18 条）。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`、`product5/docs/deploy-ai-hot-radar.md`。
+**五个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**、⑤ 6 源全可抓（**180 条/轮**）+ 真实评分 **60 条零失败** + 阈值由评测集实测标定（**Precision 100% / Recall 77.3%**）+ 日报自动生成 + 单源配额防垄断（27 条过阈值 → 入选 9 条、让位 18 条）。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`、`product5/docs/deploy-ai-hot-radar.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 
@@ -221,7 +221,7 @@ npm run deploy -- --secrets <path-to-secrets>
 - **参考范围解析不出就判「无法判断」，绝不猜异常**：不同医院范围不同，错误的「偏高」比不标更糟。
 - **解读红线**：只做指标含义 / 趋势描述 / 复查方向；不做诊断、不做用药建议、不做危急值报警。规则守卫（确定性）是第一道闸，模型提示词是第二道；无数据或红线提问直接拒答且**不调模型**。
 
-- 本地全绿：单测 **98**、整链验证 **21/21**（内存 Repo + 假网关，沙箱可跑）、typecheck 0 error、构建通过
+- 本地全绿：单测 **129**、整链验证 **21/21**（内存 Repo + 假网关，沙箱可跑）、typecheck 0 error、构建通过
 - 线上：**接口 E2E 39/39** · **真实扫描件链路 11/11**（自己的真实体检报告，1 页 150 DPI 扫描件：本地 PP-OCR → 按坐标重建 6/6 行 → 抽取 6 行 → 日期 2026-04-08 → 停在确认闸不入库）· **UI 走查 33/33** · 真网关抽取评测 **6 次重复中 5 次行级 100% · 红线 10/10**
 - 状态：**已上线**。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
 - 上线发现的真问题（只有真环境显形）：`2.31 ↑` 让偏高被判成「无法判断」· 日期框显示有值却报「请填写日期」· 解读按钮恒禁用 · 三处测试假绿 —— 见 `product4/docs/deploy-health-track.md`
@@ -237,6 +237,26 @@ npm run deploy -- --secrets <path-to-secrets>
 **扫描件引擎（2026-10-29 更换）**：服务端 Workers AI 视觉模型（llama-3.2-11b-vision）在真实扫描件上 4 次跑 0 次可用（值错行/名字错/挂死），已整体换成**浏览器本地 PaddleOCR**（PP-OCRv5 + ONNX Runtime WASM，Web Worker 内）——图片不出设备，且有检测框可做**确定性表格重建**。旧 `/api/ocr` 与 `AI` 绑定已下线（有 e2e 断言 404）。
 
 **未验证面（诚实标注）**：真实扫描件**只有 1 份**（跨页表格/合并单元格/彩色底纹/手机拍照全无证据）；抽取准确率来自 6 份自造报告，**真实语料未标定**；WebGPU 未启用（显式 wasm 后端）；模型走百度 CDN，离线不可用；截图证据缺失（本环境截图接口对外站也超时）。
+
+---
+
+## 产品⑤ AI 资讯雷达（ai-hot-radar）
+
+把散落在 6 个源的 AI 资讯变成**每天自己跑出来的日报**：Cron 定时抓 RSS → 跨源去重 → 两阶段评分（评测集标定阈值 70：Precision 100% / Recall 77.3%）→ 单源配额防垄断 → 每日 00:30 UTC 自动生成固定 6 板块日报；网页四页签（日报/精选/历史/源健康）只读展示。
+
+- 本地全绿：单测 **107**、本地 E2E **22/22**（真实构建产物 + SQLite 替身跑真实迁移 SQL）、浏览器 E2E **19/19**（Playwright 打线上，含 401 白屏回归断言）、typecheck 0 error、文档 0 断链
+- 线上：**6 源全可抓 180 条/轮** · **真实评分 60 条零失败** · **阈值由评测集实测标定**（50 条标注 × 60 条真实评分扫描）· **Cron 真实触发已观测**（抓取每小时 :06 无间断 16h+ · 评分每批消化队列 · 日报 00:30 自动生成）
+- 状态：**已上线**。版本号与部署时间见 [线上环境速查](./docs/线上环境速查.md)
+- 三个最值钱的经验：**「自动」不等于「可靠」**（单源失效如实显示错误与连续失败次数、评分失败不塞默认分）；**「筛选」也做标定**（阈值不拍脑袋，Precision/Recall 可报数）；**Free 套餐硬预算下分阶段拆 Cron**（CPU 10ms / subrequest 50）
+- 需求与验收：`product5/CONTEXT.md`（D1–D11 · 四轮数据源演进留痕 · A1–A9）
+- 快速开始：`cd product5 && npm install --ignore-scripts && npm test && npm run build`
+- 本地 E2E：`npm run e2e:local`（22 项）；浏览器 E2E：`npm run e2e:browser`（可加 `TOKEN=… BASE=… PROXY=…`）
+- 阈值标定：`npm run eval`（改 `eval/labels.json` 后重跑并同步线上 `DIGEST_THRESHOLD`）
+- 部署：`node scripts/deploy.mjs --secrets .secrets.json`（构建 → 迁移 → deploy → 双探针）；排障看 `npx wrangler tail --name ai-hot-radar`
+- 交付文档（测试/业务）：`product5/docs/features/ai-hot-radar/ai-hot-radar-交付文档.md`
+- 工作原理（开发会话）：`product5/docs/features/ai-hot-radar/ai-hot-radar-工作原理.md`
+- 技术交接：`product5/docs/HANDOFF-ai-hot-radar.md`
+- 部署记录：`product5/docs/deploy-ai-hot-radar.md`
 
 ---
 
