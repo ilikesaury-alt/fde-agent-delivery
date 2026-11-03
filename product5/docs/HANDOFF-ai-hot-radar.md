@@ -95,7 +95,7 @@ product5/
 | **待评队列只增不减（2026-11-03）** | `ORDER BY attempts ASC, published_at DESC` → 同 attempts 时永远取最新，旧条目持续饿死（线上 pending 394 条） | 改为 `published_at ASC`（最旧优先）；内存版与 D1 版必须同步 |
 | **D1 写入打满 subrequest** | 扩源后一轮要写 200+ 条 + 14 源快照，逐条 `prepare().run()` = 200+ 次往返 | 写入走 `db.batch()`（官方 limits：整批计 1 个 query；内部上限 1,000/次） |
 | **本地 E2E 夹具跟不上源列表** | 源从 6 扩到 14 后，未覆盖的 host 全被当 network 失败 → 「A6 好源仍为 ok」等断言全线失败 | 上游替身**逐个 host 覆盖**；新增源时必须同步加夹具（这类失败最易被误读成产品 bug） |
-| **magpie 网关下线（2026-11-03）** | trycloudflare 临时隧道到期（HTTP 000）→ 评分全失败 | **五个产品共用同一网关**，需重起 tunnel 并同步 `MAGPIE_BASE_URL`；抓取侧不受影响 |
+| **magpie 网关下线（2026-11-03）** | trycloudflare 快速隧道：**cloudflared 进程没在跑**（不是「域名到期」）→ 隧道不通 | **五个产品共用同一网关**，需重起 tunnel 并逐个 `wrangler secret put MAGPIE_BASE_URL`；抓取侧不受影响。工具：`tools\启动隧道.bat` / `tools\查状态.bat` |
 
 ## 5. 环境约束（本沙箱）
 
@@ -111,6 +111,9 @@ product5/
 **已验证（有证据）**
 - **14 源在真环境全部可抓**（2026-11-03 实测）：openai / deepmind / google-ai / aws-ml / nvidia / arxiv / hn / simonw /
   techcrunch-ai / importai / marktechpost / mit-tech-review / ithome / sspai，**195 条/轮、0 失败源**
+- **评分队列已清空**（2026-11-03，magpie 网关恢复后连打 16 批）：pending 558 → **1**，scored 230 → **703**、dead 0
+- **精选来源数 3 → 7**（候选窗口修正 + 源扩充 + 评分提速的联合效果）：
+  arxiv 4 / nvidia 2 / deepmind 2 / google-ai / openai-news / simonw / ithome 各 1
 - 跨请求去重生效：连打两次 `/api/feed` → 180 新增 → 180 判重
 - 真实评分 60 条零失败（magpie `auto/minimax-m3.1-flash`，prompt `score-v1`）
 - 阈值标定：70 → Precision 100% / Recall 77.3% / F1 0.872（50 条标签 × 60 条真实评分）

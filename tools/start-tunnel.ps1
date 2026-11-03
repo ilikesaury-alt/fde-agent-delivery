@@ -7,6 +7,9 @@
   多个产品共用一条隧道（都指向同一个本机 magpie 3425）：
         content-studio  ← 产品② 内容工作台
         meeting-digest  ← 产品① 会议日报
+        kb-ask          ← 产品③ 知识库问答
+        health-track    ← 产品④ 体检指标追踪
+        ai-hot-radar    ← 产品⑤ AI 资讯雷达
   新增产品时只需往 -Workers 里加一个名字，并在下文 $targets 里给出它的构建目录。
 
   用法：
@@ -20,7 +23,7 @@
 [CmdletBinding()]
 param(
   [int]$Port = 3425,
-  [string[]]$Workers = @("content-studio", "meeting-digest"),
+  [string[]]$Workers = @("content-studio", "meeting-digest", "kb-ask", "health-track", "ai-hot-radar"),
   [switch]$NoSync
 )
 
@@ -32,6 +35,9 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $targets = @{
   "content-studio" = Join-Path $root "..\product2\dist\ssr"
   "meeting-digest" = Join-Path $root "..\product1\dist\ssr"
+  "kb-ask"         = Join-Path $root "..\product3\dist\ssr"
+  "health-track"   = Join-Path $root "..\product4\dist\ssr"
+  "ai-hot-radar"   = Join-Path $root "..\product5\dist\ssr"
 }
 
 # --- 同步 secret（定义提前：PowerShell 需先定义后调用）---

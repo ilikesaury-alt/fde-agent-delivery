@@ -48,17 +48,37 @@
 - 浏览器 E2E 19/19：UI 显示「195 条 / 去重后 194」「源健康 14」。
 - 证据：`e2e-evidence/deploy-2026-11-03-v2.log`、`browser-e2e.log`（带令牌 19/19）、`local-e2e.log`（31/31）。
 
-### ⚠️ 外部依赖故障（与本次改动无关）
+### ⚠️ 外部依赖故障（与本次改动无关）：magpie 网关下线
 
-**magpie LLM 网关已下线**：`strange-healing-manuals-ada.trycloudflare.com` 返回 HTTP 000（连接不通）。
-- 表现：评分全部失败（`error: upstream`，详情「AI 服务暂不可用」），预筛丢弃的条目不受影响。
-- 影响面：**五个产品共用同一个网关** —— 实测产品② 的 `/api/generate` 也同样失败（`generate: failed`）。
-  这是 trycloudflare 临时隧道到期，**不是产品⑤ 的问题**，需重新起 tunnel 并同步 `MAGPIE_BASE_URL`。
-- 处置：抓取侧完全正常（14 源全通、195 条入库）；评分队列会积压，网关恢复后由 cron 自动消化。
+**症状**：评分全部失败（`error: upstream`，详情「AI 服务暂不可用」），预筛丢弃的条目不受影响。
+
+**根因（2026-11-03 17:00 查清）**：**不是「域名到期」—— 是 cloudflared 隧道进程没在跑**。
+`tools/status-tunnel.ps1` 实测：magpie 本机 3425 端口 HTTP 200 **正常**，但 `cloudflared` 进程已退出 → 隧道不通。
+`trycloudflare.com` 是 Cloudflare 的**免费快速隧道**：进程一关域名立即失效，每次重启**随机换域名**。
+
+**影响面**：**五个产品共用同一个网关** —— 实测产品② 的 `/api/generate` 同样失败（`generate: failed`），
+产品①③④ 同样受影响（抓取/只读接口正常，只有 LLM 生成链路挂）。
+
+**处置**：重起隧道 + 逐个同步 secret（工具链已就位，见 `docs/线上环境速查.md` §4）：
+- `tools\启动隧道.bat` → 新域名 `butler-episode-lanka-capture`（2026-11-03 16:54）
+- 5 个 Worker 的 `MAGPIE_BASE_URL` secret 全部同步成功
+- `tools/start-tunnel.ps1` 已扩展为**五产品口径**（原只含 ①②）；因产品①–④ 无 `dist/ssr` 构建产物，
+  改用产品⑤ 的 `dist/ssr` 作凭据上下文 + `--name <worker 名>` 同步
+
+**恢复验证**：
+- 网关直连 → HTTP 200 正常返回
+- 产品⑤ 评分 → `scored=15 failed=0`
+- 产品② 生成 → 「已生成 3 个标题 · 403 字正文 · 5 个标签」
+- 产品③ 问答 → embed/retrieve 全通
+- 产品① 日报 / 产品④ 抽取 → 正常返回
+
+**队列消化**：恢复后连打 16 批 `/api/score`，**pending 558 → 1**，scored 230 → **703**、dead 0。
+
+**精选多样性实测改善**：精选来源数 **3 → 7**（arxiv 4 / nvidia 2 / deepmind 2 / google-ai / openai-news / simonw / ithome 各 1）。
+这正是「候选窗口修正 + 源扩充 + 评分提速」三处改动的联合效果 —— 修复前只有 arxiv/ithome/hn 三个源。
 
 ### 遗留待办
 
-- **新源尚未进入精选**：新源条目在评分队列里（pending 558 条），网关恢复后自动消化。
 - **CPU 直接读数未取**：A9 仍标估算（需 Dashboard/observability）。
 
 ## 0.10 UI 令牌层重设计 + Markdown 渲染修复上线 · 2026-11-03
