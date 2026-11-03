@@ -33,10 +33,12 @@ export type DigestSourceState = {
 };
 
 export type DigestCounts = {
-  /** 本次抓取到的条目数 */
+  /** 窗口内新入库条目数（审查 A-4：不再复用全库 countItems） */
   fetched: number;
   /** 去重后条目数 */
   kept: number;
+  /** 窗口内被去重丢弃的条数（ingest 时记录，缺省 0） */
+  deduped?: number;
   /** 已评分条目数（当日库内总量） */
   scored: number;
   /** 过阈值条目数（配额前） */
@@ -58,6 +60,9 @@ export type DigestInput = {
   sources: DigestSourceState[];
   model: string;
   promptVersion: string;
+  /** 数据窗口（UTC 毫秒），写在日报头部让人知道「这是哪段时间的资讯」 */
+  windowStart?: number;
+  windowEnd?: number;
 };
 
 export type QuotaResult = {
@@ -154,8 +159,16 @@ export function buildDigest(input: DigestInput): {
   /* ① 概览 */
   lines.push("## 一、今日概览");
   lines.push("");
+  if (input.windowStart && input.windowEnd) {
+    lines.push(
+      `- 数据窗口：${new Date(input.windowStart).toISOString().slice(0, 16).replace("T", " ")} ~ ` +
+        `${new Date(input.windowEnd).toISOString().slice(0, 16).replace("T", " ")} UTC（按首次见到时间）`,
+    );
+  }
   lines.push(
-    `- 抓取 **${input.counts.fetched}** 条 → 去重后 **${input.counts.kept}** 条 → 已评分 **${input.counts.scored}** 条`,
+    `- 窗口内新入库 **${input.counts.fetched}** 条 → 去重后 **${input.counts.kept}** 条` +
+      (input.counts.deduped ? `（重复丢弃 ${input.counts.deduped} 条）` : "") +
+      ` → 已评分 **${input.counts.scored}** 条`,
   );
   lines.push(
     `- 达到阈值（**${input.threshold}**）**${input.counts.aboveThreshold}** 条 → 入选 **${quota.kept.length}** 条` +
@@ -224,6 +237,11 @@ export function buildDigest(input: DigestInput): {
   lines.push(`- 阈值：**${input.threshold}**（评测集标定：Precision 100% / Recall 77.3%，见 \`eval/report.md\`）`);
   lines.push(`- 模型：\`${input.model}\` · prompt：\`${input.promptVersion}\``);
   lines.push(`- 多样性：同一源最多 ${input.perSourceMax} 条（topN ${input.topN} 的 1/3），避免单源垄断`);
+  if (input.windowStart && input.windowEnd) {
+    lines.push(
+      `- 窗口：按**首次见到时间**落在当日 UTC 区间内（不是发布时间 —— 源站时间常滞后/时区混乱）`,
+    );
+  }
   lines.push("- 生成时间：" + new Date().toISOString());
   lines.push("");
 

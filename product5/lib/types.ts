@@ -42,7 +42,11 @@ export type FeedErrorCode =
   | "empty";
 
 export type FeedFetchResult =
-  | { ok: true; source: FeedSource; items: RawItem[] }
+  /**
+   * truncated：是否发生截断（条目上限 / 响应体上限 / 畸形 XML 提前闭合）。
+   * 置位后 healthOf 会降为 degraded —— 否则「源其实有 100 条但只取到 40」永远看不见（审查 A-11）。
+   */
+  | { ok: true; source: FeedSource; items: RawItem[]; truncated?: boolean }
   | { ok: false; source: FeedSource; error: FeedErrorCode; status?: number; message: string };
 
 /** 源健康三级（CONTEXT D10） */

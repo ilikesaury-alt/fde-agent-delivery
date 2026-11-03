@@ -84,10 +84,14 @@ async function createMigratedD1() {
   return db;
 }
 
+/** 审查 B-1 修复后写接口强制要求令牌，E2E 需要带同一把 */
+const E2E_TOKEN = "e2e-test-token";
+
 const workerEnv = {
   MAGPIE_BASE_URL: "https://placeholder.invalid/v1",
   MAGPIE_API_KEY: "placeholder",
   MAGPIE_MODEL: "deepseek-chat",
+  ACCESS_TOKEN: E2E_TOKEN,
   DB: await createMigratedD1(),
   ASSETS: {
     async fetch(req) {
@@ -162,9 +166,11 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? "✔" : "✖"} ${name}${detail ? ` — ${detail}` : ""}`);
 };
 
+const AUTH = { authorization: `Bearer ${E2E_TOKEN}` };
+
 const getJson = async (path) => {
   const started = Date.now();
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: AUTH });
   const body = await res.json().catch(() => null);
   return { status: res.status, body, ms: Date.now() - started };
 };
@@ -271,7 +277,7 @@ check(
 );
 
 // 增量 4：日报生成（POST 手动重跑，与 cron 同一实现 lib/daily.ts）
-const gen = await fetch(`${BASE}/api/digest`, { method: "POST" }).then(async (r) => ({
+const gen = await fetch(`${BASE}/api/digest`, { method: "POST", headers: AUTH }).then(async (r) => ({
   status: r.status,
   body: await r.json().catch(() => null),
 }));
@@ -298,6 +304,20 @@ check(
   dgList.status === 200 && Array.isArray(dgList.body?.list) && dgList.body.list.length >= 1,
   `list=${dgList.body?.list?.length}`,
 );
+
+// 审查 B-1 回归：写接口在未带令牌时必须被拒（不能匿名覆盖日报/刷爆 LLM）
+const noAuthScore = await fetch(`${BASE}/api/score`, { method: "POST" }).then((r) => r.status);
+check("审查B-1 无令牌 POST /api/score 被拒（401）", noAuthScore === 401, `status=${noAuthScore}`);
+const noAuthDigest = await fetch(`${BASE}/api/digest`, { method: "POST" }).then((r) => r.status);
+check("审查B-1 无令牌 POST /api/digest 被拒（401）", noAuthDigest === 401, `status=${noAuthDigest}`);
+
+// 审查 B-3 回归：非法参数必须 400（不能生成空日报覆盖好日报）
+const badTopN = await fetch(`${BASE}/api/digest?topN=abc`, { method: "POST", headers: AUTH }).then((r) => r.status);
+check("审查B-3 topN=abc → 400（旧实现会静默生成空日报）", badTopN === 400, `status=${badTopN}`);
+const badThreshold = await fetch(`${BASE}/api/digest?threshold=999999`, { method: "POST", headers: AUTH }).then((r) => r.status);
+check("审查B-3 threshold 越界 → 400", badThreshold === 400, `status=${badThreshold}`);
+const badTopGet = await fetch(`${BASE}/api/top?threshold=abc`, { headers: AUTH }).then((r) => r.status);
+check("审查B-3 GET /api/top 非法 threshold → 400", badTopGet === 400, `status=${badTopGet}`);
 
 // 增量 5：源健康历史接口 + 页签 UI
 const srcRes = await getJson("/api/sources?history=10");

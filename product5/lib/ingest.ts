@@ -34,6 +34,8 @@ export type IngestResult = {
   counts: { fetched: number; kept: number; deduped: number };
   items: RawItem[];
   storage: "ok" | "failed" | "disabled";
+  /** 源健康是否写成功（false 时 UI 不能把 lastHealth 当当前状态看） */
+  healthRecorded: boolean;
   persisted: { inserted: number; duplicates: number } | null;
   persistError: string | null;
 };
@@ -73,15 +75,30 @@ export async function ingestFeeds(opts: IngestOptions): Promise<IngestResult> {
   let persisted: { inserted: number; duplicates: number } | null = null;
   let persistError: string | null = null;
   let storage: IngestResult["storage"] = "disabled";
+  /** 源健康记录是否写成功（审查 A-5：与 items 写入分开，一个失败不能连带另一个） */
+  let healthRecorded = false;
 
   if (store) {
+    // ① 条目写入
     try {
       persisted = await store.saveItems(items);
-      await store.recordRun(results.map((r, i) => ({ source: sources[i]!, health: health[i]! })));
       storage = "ok";
     } catch {
       storage = "failed";
       persistError = "本次抓取未能写入存储，历史与跨请求去重暂不生效。";
+    }
+
+    // ② 源健康写入：**独立 try**（审查 A-5）。
+    // 旧实现把两步放在同一个 try 里 —— items 写入超 subrequest 预算后，
+    // recordRun 根本不会执行 → sources 表 last_health 永远停在旧的 "ok"，
+    // UI 显示源正常而实际已连续失败（这是最坏的组合：看起来一切正常）。
+    try {
+      await store.recordRun(results.map((r, i) => ({ source: sources[i]!, health: health[i]! })));
+      healthRecorded = true;
+    } catch (err) {
+      console.error(
+        `[ingest] 源健康写入失败：${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -93,6 +110,7 @@ export async function ingestFeeds(opts: IngestOptions): Promise<IngestResult> {
     counts: { fetched: all.length, kept: items.length, deduped: dropped },
     items,
     storage,
+    healthRecorded,
     persisted,
     persistError,
   };

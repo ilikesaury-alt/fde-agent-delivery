@@ -528,14 +528,18 @@ export default function IndexPage() {
                       {item.total}
                     </span>
                     <div className="min-w-0">
-                      <a
-                        href={item.link}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="text-sm text-sky-300 hover:underline"
-                      >
-                        {item.title}
-                      </a>
+                      {safeHref(item.link) ? (
+                        <a
+                          href={safeHref(item.link)!}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-sm text-sky-300 hover:underline"
+                        >
+                          {item.title}
+                        </a>
+                      ) : (
+                        <span className="text-sm text-slate-400">{item.title}（链接不安全，已禁用）</span>
+                      )}
                       <p className="mt-0.5 text-xs text-slate-400">
                         {item.sourceId}
                         {item.publishedAt ? ` · ${fmtEpoch(item.publishedAt)}` : ""}
@@ -562,14 +566,18 @@ export default function IndexPage() {
             <ul className="space-y-1.5">
               {items.items.map((item) => (
                 <li key={item.contentKey} className="rounded border border-slate-800 bg-slate-900/30 px-3 py-2">
-                  <a
-                    href={item.link}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="text-sm text-sky-300 hover:underline"
-                  >
-                    {item.title}
-                  </a>
+                  {safeHref(item.link) ? (
+                    <a
+                      href={safeHref(item.link)!}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-sm text-sky-300 hover:underline"
+                    >
+                      {item.title}
+                    </a>
+                  ) : (
+                    <span className="text-sm text-slate-400">{item.title}（链接不安全，已禁用）</span>
+                  )}
                   <p className="mt-0.5 text-xs text-slate-500">
                     {item.sourceId} · 发布 {fmtEpoch(item.publishedAt)} · 首见{" "}
                     {fmtEpoch(item.firstSeenAt)} · 最近见 {fmtEpoch(item.lastSeenAt)}

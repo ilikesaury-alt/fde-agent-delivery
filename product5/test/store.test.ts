@@ -191,11 +191,11 @@ describe("store · 评分落库（增量 3）", () => {
     return { store, key };
   }
 
-  it("评分后从未评分列表中移除", async () => {
+  it("评分后不再出现在待评队列里", async () => {
     const { store, key } = await seed();
-    assertEqual((await store.listUnscored()).length, 3);
-    await store.saveScores([row({ contentKey: key("高分条目"), total: 88 })]);
-    const left = await store.listUnscored();
+    // markScored 会释放租约，所以其余两条可以立刻被重新认领
+    await store.markScored([{ contentKey: key("高分条目"), state: "scored" }]);
+    const left = await store.claimForScoring(10);
     assertEqual(left.length, 2);
     assert(!left.some((i) => i.title === "高分条目"));
   });

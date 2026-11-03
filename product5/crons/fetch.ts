@@ -27,7 +27,9 @@ export default defineScheduled(async (_controller, env) => {
     return;
   }
 
-  const result = await ingestFeeds({
+  // 审查 B-6：包 try/catch，失败要让 Cloudflare 记成失败而不是静默成功
+  try {
+    const result = await ingestFeeds({
     env: { FEED_MAX_ITEMS: e.FEED_MAX_ITEMS, FEED_TIMEOUT_MS: e.FEED_TIMEOUT_MS },
     sources: DEFAULT_SOURCES,
     store: createD1Store(e.DB),
@@ -36,9 +38,19 @@ export default defineScheduled(async (_controller, env) => {
     concurrency: 3,
   });
 
-  console.log(
-    `[cron:fetch] 抓取 ${result.counts.fetched} / 去重 ${result.counts.kept} / ` +
-      `新增 ${result.persisted?.inserted ?? 0} / 判重 ${result.persisted?.duplicates ?? 0} / ` +
-      `失败源 ${result.failures.length} / ${result.elapsedMs}ms`,
-  );
+    console.log(
+      `[cron:fetch] 抓取 ${result.counts.fetched} / 去重 ${result.counts.kept} / ` +
+        `新增 ${result.persisted?.inserted ?? 0} / 判重 ${result.persisted?.duplicates ?? 0} / ` +
+        `失败源 ${result.failures.length} / 健康写入 ${result.healthRecorded ? "ok" : "失败"} / ${result.elapsedMs}ms`,
+    );
+
+    // 审查 A-5：存储失败不能静默 —— 打出错误让 Cloudflare 记录
+    if (result.storage === "failed") {
+      console.error(`[cron:fetch] 存储写入失败：${result.persistError ?? "未知原因"}`);
+      throw new Error("storage failed");
+    }
+  } catch (err) {
+    console.error(`[cron:fetch] 失败：${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
 });

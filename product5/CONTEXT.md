@@ -16,10 +16,12 @@
 | 4 实现 · 增量 1 | ✅ **完成**（M0 真环境 6/6 源通过，180 条真实数据） | 骨架 + `lib/rss.ts` + `/api/feed` + 首页；30 单测 + 11 E2E 过；已部署 `c5dc0553` |
 | 4 实现 · 增量 2 | ✅ **完成**（线上连打两次：180 新增 → 180 判重） | `db/migrations/0001` + `lib/store.ts` + `/api/items`；43 单测 + 15 E2E 过；线上 `14e8e4b5` |
 | 4 实现 · 增量 3 | ✅ **完成**（真 magpie 评分 60 条零失败；阈值标定 70 → P 100% / R 77.3%） | `lib/score.ts` + `lib/llm.ts` + `/api/score` + `/api/top` + `eval/`（50 条标签 + 标定报告）；69 单测 + 15 E2E 过 |
-| 4 实现 · 增量 4 | ⏳ 下一步：Cron 定时抓取+评分+日报生成 | — |
+| 4 实现 · 增量 4 | ✅ **完成**（3 Cron 注册 + 日报 6 板块 + 单源配额：27 过阈值→入选 9、让位 18） | `lib/digest.ts` + `lib/daily.ts` + `lib/ingest.ts` + `crons/*` + `/api/digest`；85 单测 + 19 E2E；线上 `bcd0f613` |
 | 4 实现 · 增量 5 | ✅ **完成**（四页签 + 源健康历史 + Markdown 渲染） | `routes/api/sources.ts` + 首页重写；88 单测 + 22 E2E 过 |
-| 4 实现 · 增量 6 | ⏳ 下一步：交付收口（交付文档 / HANDOFF / 作品集索引收录 / CI 矩阵） | — |
-| 5~7 审查/E2E/验收 | ⏳ | — |
+| 4 实现 · 增量 6 | ✅ **完成**（交付文档 + 工作原理 + HANDOFF + 索引收录 + CI 五产品矩阵） | `product5/docs/features/ai-hot-radar/` + `product5/docs/HANDOFF-ai-hot-radar.md`；文档 49 md / 0 断链 |
+| 5 交叉对抗审查 | ⏳ **未做**（产品②③④ 均做过，本产品待补） | — |
+| 6 端到端验证 | 🟡 接口级 22/22 + 浏览器级 18/18 + 线上探针全过；**Cron 真实触发未观测** | `product5/docs/e2e-evidence/` |
+| 7 验收报告与人工 Review | ⏳ **未做** | — |
 
 ## 作品集定位（能力增量轴）
 

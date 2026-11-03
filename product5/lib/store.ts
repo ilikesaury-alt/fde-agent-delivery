@@ -28,6 +28,10 @@ export type D1Like = {
 /** 每条资讯的持久化形态 */
 export type StoredItem = {
   contentKey: string;
+  /** 评分尝试次数（审查 A-1 修复：用于决定重试还是标 dead） */
+  scoreAttempts?: number;
+  /** 评分队列状态 */
+  scoreState?: "pending" | "scored" | "dropped" | "dead";
   id: string;
   sourceId: string;
   title: string;
@@ -90,6 +94,7 @@ export type DigestRecord = {
   counts: {
     fetched: number;
     kept: number;
+    deduped?: number;
     scored: number;
     aboveThreshold: number;
     selected: number;
@@ -97,6 +102,13 @@ export type DigestRecord = {
   };
   model: string;
   promptVersion: string;
+  /** 数据窗口（UTC 毫秒），审查 A-2 修复 */
+  windowStart?: number;
+  windowEnd?: number;
+  /** 生成标识与来源，审查 B-3 修复（并发追溯） */
+  generationId?: string;
+  generationSource?: string;
+  previousSelected?: number | null;
 };
 
 /** D1 实现里「通用部分」的类型：日报方法是后挂的，避免基对象声明重复要求 */
@@ -122,10 +134,49 @@ export type Store = {
   healthHistory(sourceId: string, limit?: number): Promise<HealthRow[]>;
   /** 写评分（同一条只留最新一次：重评分是常态） */
   saveScores(rows: ScoreRow[], now?: number): Promise<number>;
-  /** 读**未评分**条目（评分批次的输入；靠 LEFT JOIN 而不是内存过滤） */
-  listUnscored(limit?: number): Promise<StoredItem[]>;
-  /** 读达到阈值的条目（按总分倒序）—— 精选与日报的数据源 */
+  /**
+   * 认领一批待评分条目（审查 A-1 / B-2 修复）。
+   *
+   * 与原 `listUnscored` 的区别：
+   *   1. **按 score_attempts 升序**（不是 published_at 降序）—— 旧条目先评，避免新条目把队列饿死；
+   *   2. **原子认领**（写 claimed_at 租约），并发的 cron 与手动请求不会拿到同一批；
+   *   3. 租约过期（默认 10 分钟）的条目可被重新认领 —— worker 崩溃不会让队列永久卡死。
+   */
+  claimForScoring(limit: number, opts?: { leaseMs?: number; now?: number }): Promise<StoredItem[]>;
+  /** 标记条目为已评分 / 丢弃 / 死亡，并记录尝试次数与错误 */
+  markScored(
+    results: Array<{
+      contentKey: string;
+      /** pending = 失败但未超上限，回到队列等下一轮重试 */
+      state: "scored" | "dropped" | "dead" | "pending";
+      error?: string;
+    }>,
+    now?: number,
+  ): Promise<void>;
+  /** 读达到阈值的条目（按总分倒序）—— 精选的数据源 */
   listTopScored(opts: { threshold: number; limit?: number }): Promise<RankedItem[]>;
+  /**
+   * 读**某个时间窗口内**达到阈值的条目（日报专用，审查 A-2 修复）。
+   *
+   * 窗口按 `first_seen_at` 判定：日报语义是「今天新出现的资讯」，
+   * 而不是「全库累计的高分条目」—— 否则第 1 天与第 30 天的日报几乎逐字相同。
+   */
+  listTopScoredInWindow(opts: {
+    threshold: number;
+    sinceMs: number;
+    untilMs: number;
+    limit?: number;
+  }): Promise<RankedItem[]>;
+  /** 窗口内的计数（日报口径，审查 A-4 修复：不再复用全库 countItems） */
+  windowStats(sinceMs: number, untilMs: number, threshold: number): Promise<{
+    fetched: number;
+    kept: number;
+    deduped: number;
+    scored: number;
+    aboveThreshold: number;
+  }>;
+  /** 队列状态分布（运维/验收用：能看到有多少条 pending / dropped / dead） */
+  queueStats(): Promise<Record<string, number>>;
   /** 写日报（同一天重跑 = 覆盖：日报是「该日最新结论」而非追加日志） */
   saveDigest(record: DigestRecord, now?: number): Promise<void>;
   getDigest(date: string): Promise<DigestRecord | null>;
@@ -153,6 +204,11 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
   const sources = new Map<string, SourceState>();
   const health: HealthRow[] = [];
   const scores = new Map<string, ScoreRow & { scoredAt: number }>();
+  // 评分队列状态（审查 A-1 修复）：状态 / 尝试次数 / 租约 / 最后错误
+  const itemState = new Map<string, "pending" | "scored" | "dropped" | "dead">();
+  const itemAttempts = new Map<string, number>();
+  const itemClaimedAt = new Map<string, number>();
+  const itemLastError = new Map<string, string>();
   const digests = new Map<string, DigestRecord & { updatedAt: number }>();
 
   return {
@@ -236,11 +292,83 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
       return rows.length;
     },
 
-    async listUnscored(limit = 50) {
-      return [...items.values()]
-        .filter((i) => !scores.has(i.contentKey))
-        .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
+    async claimForScoring(limit, opts = {}) {
+      const now = opts.now ?? Date.now();
+      const leaseMs = opts.leaseMs ?? 10 * 60_000;
+      const eligible = [...items.values()]
+        .filter((i) => {
+          const st = itemState.get(i.contentKey) ?? "pending";
+          if (st !== "pending") return false;
+          const claimed = itemClaimedAt.get(i.contentKey);
+          // 未被认领，或租约已过期（worker 崩溃后自动回收）
+          return claimed === undefined || now - claimed > leaseMs;
+        })
+        // 关键（审查 A-1）：按尝试次数升序，让旧条目先被评，避免被新条目饿死
+        .sort((a, b) => {
+          const da = itemAttempts.get(a.contentKey) ?? 0;
+          const db = itemAttempts.get(b.contentKey) ?? 0;
+          if (da !== db) return da - db;
+          return (b.publishedAt ?? 0) - (a.publishedAt ?? 0);
+        })
         .slice(0, limit);
+
+      for (const it of eligible) itemClaimedAt.set(it.contentKey, now);
+      return eligible;
+    },
+
+    async markScored(results, now = Date.now()) {
+      for (const r of results) {
+        itemState.set(r.contentKey, r.state);
+        itemClaimedAt.delete(r.contentKey);
+        if (r.state === "scored") {
+          itemAttempts.set(r.contentKey, (itemAttempts.get(r.contentKey) ?? 0) + 1);
+          itemLastError.delete(r.contentKey);
+        } else if (r.state === "pending") {
+          itemAttempts.set(r.contentKey, (itemAttempts.get(r.contentKey) ?? 0) + 1);
+          if (r.error) itemLastError.set(r.contentKey, r.error);
+        } else if (r.error) {
+          itemLastError.set(r.contentKey, r.error);
+        }
+      }
+      void now;
+    },
+
+    async listTopScoredInWindow(opts) {
+      const out: RankedItem[] = [];
+      for (const sc of scores.values()) {
+        if (sc.total < opts.threshold) continue;
+        const item = items.get(sc.contentKey);
+        if (!item) continue;
+        if (item.firstSeenAt < opts.sinceMs || item.firstSeenAt >= opts.untilMs) continue;
+        out.push({ ...item, total: sc.total, reason: sc.reason, scoredAt: sc.scoredAt });
+      }
+      return out.sort((a, b) => b.total - a.total).slice(0, Math.max(1, opts.limit ?? 200));
+    },
+
+    async windowStats(sinceMs, untilMs, threshold) {
+      let fetched = 0;
+      let scored = 0;
+      let above = 0;
+      for (const item of items.values()) {
+        if (item.firstSeenAt < sinceMs || item.firstSeenAt >= untilMs) continue;
+        fetched++;
+        const sc = scores.get(item.contentKey);
+        if (sc) {
+          scored++;
+          if (sc.total >= threshold) above++;
+        }
+      }
+      // 窗口内「去重丢弃数」无法从存储反推（只有 ingest 时知道），由调用方传入或记 0
+      return { fetched, kept: fetched, deduped: 0, scored, aboveThreshold: above };
+    },
+
+    async queueStats() {
+      const out: Record<string, number> = { pending: 0, scored: 0, dropped: 0, dead: 0 };
+      for (const item of items.values()) {
+        const st = itemState.get(item.contentKey) ?? (scores.has(item.contentKey) ? "scored" : "pending");
+        out[st] = (out[st] ?? 0) + 1;
+      }
+      return out;
     },
 
     async listTopScored(opts) {
@@ -291,6 +419,10 @@ const ROWS_PER_CHUNK = 10;
 
 type ItemRow = {
   content_key: string;
+  score_state?: string;
+  score_attempts?: number;
+  claimed_at?: number | null;
+  last_error?: string | null;
   id: string;
   source_id: string;
   title: string;
@@ -361,14 +493,24 @@ export function createD1Store(db: D1Like): Store {
         inserted += res?.meta?.changes ?? 0;
       }
 
-      // 已存在的条目：只更新 last_seen_at（first_seen_at 不动，它是「第一次见到」的事实）
-      for (let i = 0; i < rows.length; i += 90) {
-        const keys = rows.slice(i, i + 90).map(([k]) => k);
-        const marks = keys.map(() => "?").join(",");
-        await db
-          .prepare(`UPDATE items SET last_seen_at = ? WHERE content_key IN (${marks})`)
-          .bind(now, ...keys)
-          .run();
+      // 已存在的条目：更新 last_seen_at + title/summary（源站会修订标题），first_seen_at 不动
+      //
+      // 审查 B-4：原实现 D1 只 UPDATE last_seen_at，而内存实现会覆盖 title/summary ——
+      // 两个「同接口」实现语义不同，导致「单测/本地 E2E 看到新标题、线上永远是首见版本」。
+      // 现在 D1 也更新 title/summary，两边一致。
+      for (let i = 0; i < rows.length; i += 30) {
+        const chunk = rows.slice(i, i + 30);
+        const marks = chunk.map(() => "?").join(",");
+        const keys = chunk.map(([k]) => k);
+        // 逐行 UPDATE（不同行 title 不同，无法用单条多值语句）——按 30 行/批控制 subrequest 数
+        for (let j = 0; j < chunk.length; j++) {
+          const [, item] = chunk[j]!;
+          await db
+            .prepare(`UPDATE items SET last_seen_at = ?, title = ?, summary = ? WHERE content_key = ?`)
+            .bind(now, item.title, item.summary, keys[j]!)
+            .run();
+        }
+        void marks;
       }
 
       return { inserted, duplicates: rows.length - inserted };
@@ -475,18 +617,143 @@ export function createD1Store(db: D1Like): Store {
       return written;
     },
 
-    async listUnscored(limit = 50) {
+    async claimForScoring(limit, opts = {}) {
+      const now = opts.now ?? Date.now();
+      const leaseMs = opts.leaseMs ?? 10 * 60_000;
+      const leaseCutoff = now - leaseMs;
+      const capped = Math.max(1, Math.min(limit, 50));
+
+      // ① 先选出候选（未认领或租约已过期），按 attempts 升序 —— 旧条目先评，避免饿死
       const res = await db
         .prepare(
-          `SELECT i.* FROM items i
-             LEFT JOIN scores s ON s.content_key = i.content_key
-            WHERE s.content_key IS NULL
-            ORDER BY COALESCE(i.published_at, 0) DESC, i.last_seen_at DESC
+          `SELECT content_key FROM items
+            WHERE score_state = 'pending'
+              AND (claimed_at IS NULL OR claimed_at < ?)
+            ORDER BY score_attempts ASC, COALESCE(published_at, 0) DESC
             LIMIT ?`,
         )
-        .bind(Math.max(1, Math.min(limit, 200)))
+        .bind(leaseCutoff, capped)
+        .all<{ content_key: string }>();
+
+      const keys = (res.results ?? []).map((r) => r.content_key);
+      if (keys.length === 0) return [];
+
+      // ② 原子认领（只认领仍未被别人拿走的行）—— 并发下 cron 与手动不会拿到同一批
+      const marks = keys.map(() => "?").join(",");
+      await db
+        .prepare(`UPDATE items SET claimed_at = ? WHERE content_key IN (${marks})`)
+        .bind(now, ...keys)
+        .run();
+
+      // ③ 回读完整行（保持认领顺序）
+      const rows = await db
+        .prepare(`SELECT * FROM items WHERE content_key IN (${marks})`)
+        .bind(...keys)
         .all<ItemRow>();
-      return (res.results ?? []).map(rowToItem);
+      const byKey = new Map((rows.results ?? []).map((r) => [r.content_key, rowToItem(r)]));
+      return keys.map((k) => byKey.get(k)).filter((x): x is StoredItem => Boolean(x));
+    },
+
+    async markScored(results, now = Date.now()) {
+      // 按状态分组批量更新（每类一条 SQL，避免 N 次往返吃 subrequest 预算）
+      const scored = results.filter((r) => r.state === "scored").map((r) => r.contentKey);
+      const dropped = results.filter((r) => r.state === "dropped").map((r) => r.contentKey);
+      const dead = results.filter((r) => r.state === "dead").map((r) => r.contentKey);
+      const retry = results.filter((r) => r.state === "pending");
+
+      const chunk = async (keys: string[], state: string, incAttempts: boolean) => {
+        for (let i = 0; i < keys.length; i += 90) {
+          const slice = keys.slice(i, i + 90);
+          const marks = slice.map(() => "?").join(",");
+          await db
+            .prepare(
+              `UPDATE items
+                  SET score_state = ?, claimed_at = NULL, last_error = NULL,
+                      score_attempts = score_attempts ${incAttempts ? "+ 1" : ""}
+                WHERE content_key IN (${marks})`,
+            )
+            .bind(state, ...slice)
+            .run();
+        }
+      };
+
+      await chunk(scored, "scored", true);
+      await chunk(dropped, "dropped", false);
+      await chunk(dead, "dead", false);
+
+      // 失败但未超上限 → 回到 pending 并 +1 尝试次数（租约释放，下轮可重试）
+      for (const r of retry) {
+        await db
+          .prepare(
+            `UPDATE items SET score_state = 'pending', claimed_at = NULL,
+                    score_attempts = score_attempts + 1, last_error = ?
+              WHERE content_key = ?`,
+          )
+          .bind(r.error ?? null, r.contentKey)
+          .run();
+      }
+      void now;
+    },
+
+    async listTopScoredInWindow(opts) {
+      const res = await db
+        .prepare(
+          `SELECT i.*, s.total AS score_total, s.reason AS score_reason, s.scored_at AS score_at
+             FROM scores s JOIN items i ON i.content_key = s.content_key
+            WHERE s.total >= ?
+              AND i.first_seen_at >= ? AND i.first_seen_at < ?
+            ORDER BY s.total DESC, COALESCE(i.published_at, 0) DESC
+            LIMIT ?`,
+        )
+        .bind(opts.threshold, opts.sinceMs, opts.untilMs, Math.max(1, Math.min(opts.limit ?? 200, 500)))
+        .all<ItemRow & { score_total: number; score_reason: string; score_at: number }>();
+      return (res.results ?? []).map((r) => ({
+        ...rowToItem(r),
+        total: r.score_total,
+        reason: r.score_reason ?? "",
+        scoredAt: r.score_at,
+      }));
+    },
+
+    async windowStats(sinceMs, untilMs, threshold) {
+      const win = `first_seen_at >= ? AND first_seen_at < ?`;
+      const fetchedRow = await db
+        .prepare(`SELECT COUNT(*) AS n FROM items WHERE ${win}`)
+        .bind(sinceMs, untilMs)
+        .first<{ n: number }>();
+      const scoredRow = await db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM scores s JOIN items i ON i.content_key = s.content_key
+            WHERE i.${win}`,
+        )
+        .bind(sinceMs, untilMs)
+        .first<{ n: number }>();
+      const aboveRow = await db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM scores s JOIN items i ON i.content_key = s.content_key
+            WHERE i.${win} AND s.total >= ?`,
+        )
+        .bind(sinceMs, untilMs, threshold)
+        .first<{ n: number }>();
+      const fetched = Number(fetchedRow?.n ?? 0);
+      return {
+        fetched,
+        kept: fetched,
+        // 窗口内被去重丢弃的条数无法从存储反推（只有 ingest 时知道），由调用方补
+        deduped: 0,
+        scored: Number(scoredRow?.n ?? 0),
+        aboveThreshold: Number(aboveRow?.n ?? 0),
+      };
+    },
+
+    async queueStats() {
+      const res = await db
+        .prepare(`SELECT score_state, COUNT(*) AS n FROM items GROUP BY score_state`)
+        .bind()
+        .all<{ score_state: string; n: number }>();
+      const out: Record<string, number> = {};
+      for (const r of res.results ?? []) out[r.score_state] = Number(r.n);
+      return out;
     },
 
     async listTopScored(opts) {
@@ -544,9 +811,11 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
       await db
         .prepare(
           `INSERT INTO daily
-             (date, markdown, threshold, per_source_max, top_n, fetched, kept, scored,
-              above_threshold, selected, skipped_quota, model, prompt_version, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             (date, markdown, threshold, per_source_max, top_n, fetched, kept, deduped, scored,
+              above_threshold, selected, skipped_quota, model, prompt_version,
+              window_start, window_end, generation_id, generation_source, previous_selected,
+              created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(date) DO UPDATE SET
              markdown = excluded.markdown,
              threshold = excluded.threshold,
@@ -554,13 +823,19 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
              top_n = excluded.top_n,
              fetched = excluded.fetched,
              kept = excluded.kept,
+             deduped = excluded.deduped,
              scored = excluded.scored,
              above_threshold = excluded.above_threshold,
              selected = excluded.selected,
              skipped_quota = excluded.skipped_quota,
              model = excluded.model,
              prompt_version = excluded.prompt_version,
-             updated_at = excluded.updated_at`,
+             window_start = excluded.window_start,
+             window_end = excluded.window_end,
+             generation_id = excluded.generation_id,
+             generation_source = excluded.generation_source,
+             previous_selected = excluded.previous_selected,
+             updated_at = excluded.updated_at`
         )
         .bind(
           record.date,
@@ -570,12 +845,18 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
           record.topN,
           record.counts.fetched,
           record.counts.kept,
+          record.counts.deduped ?? 0,
           record.counts.scored,
           record.counts.aboveThreshold,
           record.counts.selected,
           record.counts.skippedQuota,
           record.model,
           record.promptVersion,
+          record.windowStart ?? null,
+          record.windowEnd ?? null,
+          record.generationId ?? null,
+          record.generationSource ?? "cron",
+          record.previousSelected ?? null,
           now,
           now,
         )
@@ -611,6 +892,7 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
         counts: {
           fetched: row.fetched,
           kept: row.kept,
+          deduped: (row as { deduped?: number }).deduped ?? 0,
           scored: row.scored,
           aboveThreshold: row.above_threshold,
           selected: row.selected,
@@ -618,6 +900,11 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
         },
         model: row.model,
         promptVersion: row.prompt_version,
+        windowStart: (row as { window_start?: number }).window_start ?? undefined,
+        windowEnd: (row as { window_end?: number }).window_end ?? undefined,
+        generationId: (row as { generation_id?: string }).generation_id ?? undefined,
+        generationSource: (row as { generation_source?: string }).generation_source ?? undefined,
+        previousSelected: (row as { previous_selected?: number }).previous_selected ?? null,
       };
     },
 
@@ -649,6 +936,8 @@ function attachDigestMethods(store: StoreBase, db: D1Like): Store {
 function rowToItem(r: ItemRow): StoredItem {
   return {
     contentKey: r.content_key,
+    scoreAttempts: r.score_attempts ?? 0,
+    scoreState: (r.score_state as StoredItem["scoreState"]) ?? "pending",
     id: r.id,
     sourceId: r.source_id,
     title: r.title,

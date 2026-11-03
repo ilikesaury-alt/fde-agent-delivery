@@ -59,6 +59,7 @@ export const GET = defineHandler(async (c) => {
     elapsedMs: result.elapsedMs,
     budget: { sources: sources.length, maxItemsPerSource: maxItems, timeoutMs },
     storage: result.storage,
+    healthRecorded: result.healthRecorded,
     persisted: result.persisted,
     persistError: result.persistError,
     sources: result.sources,

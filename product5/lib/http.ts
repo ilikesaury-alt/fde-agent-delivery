@@ -2,7 +2,7 @@
  * 路由共用小工具：env 解析、JSON 响应、令牌鉴权。
  * 与产品②③④ 同口径（独立副本）。
  */
-import { checkAccessToken } from "./auth.ts";
+import { authModeOf, checkAccessToken } from "./auth.ts";
 import { createD1Store, type D1Like, type Store } from "./store.ts";
 
 export type RadarEnv = {
@@ -64,10 +64,20 @@ export function jsonResponse(status: number, body: unknown): Response {
 /** 令牌校验；返回非 null 表示应直接返回该响应 */
 export function authorize(c: unknown, header: string | undefined): Response | null {
   const { ACCESS_TOKEN } = resolveEnv(c);
+  const mode = authModeOf(ACCESS_TOKEN);
+  // 审查 B-1：配置了但为空串 = 运维失误，明确报「配置错误」而不是含糊的「令牌错误」
+  if (mode === "broken") {
+    return jsonResponse(503, { error: "服务端 ACCESS_TOKEN 配置为空，已拒绝所有请求（请重新配置）。" });
+  }
   if (!checkAccessToken(ACCESS_TOKEN, header)) {
     return jsonResponse(401, { error: "访问令牌缺失或错误。" });
   }
   return null;
+}
+
+/** 当前鉴权模式（供 /api/health 暴露，让运维一眼看出「当前无鉴权」） */
+export function authMode(c: unknown): "open" | "broken" | "enforced" {
+  return authModeOf(resolveEnv(c).ACCESS_TOKEN);
 }
 
 /** 解析正整数环境变量（非法则回退默认值，不抛） */

@@ -64,14 +64,25 @@ export function toPlainText(input: string, maxLen = 400): string {
   return plain.length > maxLen ? `${plain.slice(0, maxLen - 1).trimEnd()}…` : plain;
 }
 
-/** 稳定短 hash（FNV-1a 32bit → hex）：用于「同内容」去重键 */
+/**
+ * 稳定 hash（双 FNV-1a 32bit 组合 → 64bit hex）。
+ *
+ * 为什么必须是 64bit（审查 A-8/B-8）：32bit 空间下约 7.7 万条即 50% 概率生日碰撞，
+ * 按 180 条/日约一年就会撞。碰撞后果是 `INSERT OR IGNORE` 把后来者**静默判为重复**
+ * （条目丢失、日志显示"判重"），且 `JOIN items ON content_key` 会把别人的分数挂上去。
+ * 64bit 把 50% 碰撞点推到约 40 亿条，对本产品量级等于不会发生。
+ */
 export function hashId(input: string): string {
-  let h = 0x811c9dc5;
+  let h1 = 0x811c9dc5;
+  let h2 = 0x811c9dc5 ^ 0x9e3779b9; // 用不同初值，降低两半相关
   for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
+    const c = input.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= c;
+    h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
   }
-  return h.toString(16).padStart(8, "0");
+  return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0"));
 }
 
 /* ───────────────────────── XML 取字段 ───────────────────────── */
@@ -91,6 +102,23 @@ export function findTagInner(block: string, names: string[]): string | null {
   return null;
 }
 
+/**
+ * 只允许 http/https 的绝对 URL。
+ * 审查 B-3：第三方 feed 的 `<link href="javascript:...">` 会入库为 items.link，
+ * 页面直接 href 出去 → 同源执行脚本、读走 localStorage 里的访问令牌（全站无 CSP 兜底）。
+ * 实体编码（`&#106;avascript:`）会先被 decodeEntities 还原，所以必须在**解码后**校验。
+ */
+export function isSafeHttpUrl(raw: string): boolean {
+  const text = raw.trim();
+  if (!/^https?:\/\//i.test(text)) return false;
+  try {
+    const u = new URL(text);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** 解析条目里的链接：优先 Atom 的 href（rel 缺省或 alternate），回退 RSS 的文本链接 */
 export function resolveItemLink(block: string): string | null {
   const tagRe = /<link\b([^>]*)>/gi;
@@ -102,13 +130,14 @@ export function resolveItemLink(block: string): string | null {
     const rel = attrValue(attrs, "rel");
     if (!rel || rel.toLowerCase() === "alternate" || rel.toLowerCase() === "home") {
       const trimmed = href.trim();
-      if (trimmed) return trimmed;
+      // 协议白名单在**解码后**判定（防 &#106;avascript: 这类实体绕过）
+      if (trimmed && isSafeHttpUrl(trimmed)) return trimmed;
     }
   }
   const inner = findTagInner(block, ["link"]);
   if (inner) {
     const text = decodeEntities(inner).trim();
-    if (text && /^https?:\/\//i.test(text)) return text;
+    if (text && isSafeHttpUrl(text)) return text;
   }
   return null;
 }
@@ -130,7 +159,17 @@ export function parseDate(raw: string | null): string | null {
 /* ───────────────────────── 解析入口 ───────────────────────── */
 
 export type ParseOutcome =
-  | { ok: true; items: RawItem[] }
+  | {
+      ok: true;
+      items: RawItem[];
+      /**
+       * 是否发生了截断（审查 A-11）。
+       * 三种静默截断都会置位：maxItems 上限、响应体 2MB 上限、畸形 XML 提前闭合。
+       * 置位后 health 应降为 `degraded` —— 否则「源其实有 100 条但只取到 40」永远察觉不到，
+       * baseline 还会被抬到截断值，之后彻底看不见源在增长。
+       */
+      truncated: boolean;
+    }
   | { ok: false; error: Extract<FeedErrorCode, "parse_error" | "empty">; message: string };
 
 const ITEM_BLOCK_RE = /<(item|entry)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
@@ -164,7 +203,14 @@ export function parseFeedXml(xml: string, sourceId: string, opts: ParseOptions =
   ITEM_BLOCK_RE.lastIndex = 0;
 
   let match: RegExpExecArray | null;
-  while ((match = ITEM_BLOCK_RE.exec(cleaned)) !== null && items.length < maxItems) {
+  let blockCount = 0;
+  let hitLimit = false;
+  while ((match = ITEM_BLOCK_RE.exec(cleaned)) !== null) {
+    blockCount++;
+    if (items.length >= maxItems) {
+      hitLimit = true;
+      break;
+    }
     const block = match[3] ?? "";
 
     const rawTitle = findTagInner(block, ["title"]);
@@ -202,7 +248,9 @@ export function parseFeedXml(xml: string, sourceId: string, opts: ParseOptions =
     };
   }
 
-  return { ok: true, items };
+  // 还有更多条目块没被解析 → 是 maxItems 截断
+  const truncated = hitLimit || blockCount > items.length && blockCount >= maxItems;
+  return { ok: true, items, truncated };
 }
 
 /* ───────────────────────── 去重 ───────────────────────── */
@@ -227,6 +275,10 @@ export function normalizeUrl(raw: string): string {
       if (drop.has(key.toLowerCase())) u.searchParams.delete(key);
     }
     u.hostname = u.hostname.toLowerCase();
+    // 审查 A-7：不归一 protocol 与 www. 会让 `http://x.com/a` 与 `https://www.x.com/a`
+    // 变成两个 content_key → 同一条资讯入库两条。统一按 https + 去 www 处理。
+    if (u.hostname.startsWith("www.")) u.hostname = u.hostname.slice(4);
+    if (u.protocol === "http:") u.protocol = "https:";
     u.pathname = u.pathname.replace(/\/+$/, "");
     let out = u.toString();
     if (out.endsWith("/")) out = out.slice(0, -1);
@@ -254,7 +306,9 @@ export function dedupeItems(items: RawItem[]): DedupeResult {
 
   for (const item of items) {
     const linkKey = normalizeUrl(item.link);
-    const titleKey = hashId(item.title.trim().toLowerCase());
+    // 审查 A-7：标题去重必须**限定同源**。跨源同标题（「AI 日报 2026-11-02」这类
+    // 模板化标题）是不同文章，按标题跨源去重会把它们静默误杀。
+    const titleKey = `${item.sourceId}::${hashId(item.title.trim().toLowerCase())}`;
     if (seenLink.has(linkKey) || seenTitle.has(titleKey)) {
       dropped++;
       continue;
@@ -380,7 +434,7 @@ export async function fetchFeed(
     const parsed = parseFeedXml(xml, source.id, { maxItems: opts.maxItems });
     if (!parsed.ok) return fail(source, parsed.error, parsed.message);
 
-    return { ok: true, source, items: parsed.items };
+    return { ok: true, source, items: parsed.items, truncated: parsed.truncated };
   } finally {
     clearTimeout(timer);
   }
@@ -436,6 +490,11 @@ export function healthOf(
     };
   }
   const count = result.items.length;
+  // 审查 A-11：发生截断（条目上限 / 响应体上限 / 畸形 XML 提前闭合）时不能判 ok，
+  // 否则「源其实有 100 条但只取到 40」永远察觉不到，baseline 还会被抬到截断值。
+  if (result.truncated) {
+    return { sourceId: result.source.id, level: "degraded", itemCount: count, checkedAt };
+  }
   if (baselineCount && baselineCount >= 5 && count < baselineCount * 0.4) {
     return { sourceId: result.source.id, level: "degraded", itemCount: count, checkedAt };
   }

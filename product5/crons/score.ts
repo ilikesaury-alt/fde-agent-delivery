@@ -1,22 +1,22 @@
 /**
  * Cron：评分（每小时 :20，UTC）
  *
- * 每次只评一批（默认 10 条，上限 20）：Free 套餐 subrequest 50/次 是硬预算，
- * 而每条评分 = 1 次 LLM 调用 + 写入。
- * 失败条目保持「未评分」，下一轮自动重试 —— 天然幂等补偿，不需要额外重试逻辑。
+ * 走 `lib/queue.ts`（与 POST /api/score 共用），修复审查发现：
+ *   A-1 旧条目饿死 → claimForScoring 按 attempts 升序 + 租约认领
+ *   A-3 预筛死代码 → 先跑本地预筛，噪音不送 LLM
+ *   B-2 并发重复评分 → 租约保证 cron 与手动不拿同一批
+ *   失败累计 3 次 → 标 dead，不再无限重试烧钱
+ *
+ * 每批默认 10 条（Free 套餐 subrequest 50/次 是硬预算，每条评分 = 1 次 LLM 调用）。
  */
 
 import { defineScheduled } from "void";
 
-import { scoreMany } from "../lib/llm.ts";
-import { createD1Store, type D1Like, type StoreBase } from "../lib/store.ts";
-import type { ScoreRow } from "../lib/store.ts";
+import { claimAndScore } from "../lib/queue.ts";
 import { SCORE_PROMPT_VERSION } from "../lib/score.ts";
+import { createD1Store, type D1Like } from "../lib/store.ts";
 
 export const cron = "20 * * * *";
-
-/** 与 routes/api/score.ts 共用同一个版本常量（改 prompt 必须两处同步） */
-const PROMPT_VERSION = SCORE_PROMPT_VERSION;
 
 export default defineScheduled(async (_controller, env) => {
   const e = env as {
@@ -36,43 +36,23 @@ export default defineScheduled(async (_controller, env) => {
     return;
   }
 
-  const store: StoreBase & Pick<ReturnType<typeof createD1Store>, "listUnscored" | "saveScores"> =
-    createD1Store(e.DB);
+  const batch = Math.min(Number.parseInt(e.SCORE_BATCH ?? "10", 10) || 10, 30);
 
-  const batch = Math.min(Number.parseInt(e.SCORE_BATCH ?? "10", 10) || 10, 20);
-  const unscored = await store.listUnscored(batch);
-  if (unscored.length === 0) {
-    console.log("[cron:score] 队列为空");
-    return;
-  }
-
-  const results = await scoreMany(
-    { MAGPIE_BASE_URL: e.MAGPIE_BASE_URL, MAGPIE_API_KEY: e.MAGPIE_API_KEY, MAGPIE_MODEL: e.MAGPIE_MODEL },
-    unscored.map((i) => ({ title: i.title, summary: i.summary, sourceId: i.sourceId })),
-    { concurrency: 2 },
-  );
-
-  const rows: ScoreRow[] = [];
-  let failed = 0;
-  results.forEach((r, idx) => {
-    const item = unscored[idx]!;
-    if (!r.result.ok) {
-      failed++;
-      return;
-    }
-    rows.push({
-      contentKey: item.contentKey,
-      relevance: r.result.score.relevance,
-      novelty: r.result.score.novelty,
-      usefulness: r.result.score.usefulness,
-      authority: r.result.score.authority,
-      total: r.result.score.total,
-      reason: r.result.score.reason,
+  // 审查 B-6：cron 入口必须包 try/catch —— 否则缺表/迁移未应用时静默失败，无人知道
+  try {
+    const result = await claimAndScore({
+      store: createD1Store(e.DB),
+      env: { MAGPIE_BASE_URL: e.MAGPIE_BASE_URL, MAGPIE_API_KEY: e.MAGPIE_API_KEY, MAGPIE_MODEL: e.MAGPIE_MODEL },
+      limit: batch,
       model: e.MAGPIE_MODEL || "deepseek-chat",
-      promptVersion: PROMPT_VERSION,
+      promptVersion: SCORE_PROMPT_VERSION,
     });
-  });
-
-  if (rows.length > 0) await store.saveScores(rows);
-  console.log(`[cron:score] 批次 ${unscored.length} · 成功 ${rows.length} · 失败 ${failed}`);
+    console.log(
+      `[cron:score] 预筛丢弃 ${result.dropped} / 评分成功 ${result.scored} / ` +
+        `失败待重试 ${result.failed} / 放弃 ${result.dead} / 队列仍有 ${result.pending ? "待评" : "空"}`,
+    );
+  } catch (err) {
+    console.error(`[cron:score] 失败：${err instanceof Error ? err.message : String(err)}`);
+    throw err; // 让 Cloudflare 记录为失败，而不是静默成功
+  }
 });

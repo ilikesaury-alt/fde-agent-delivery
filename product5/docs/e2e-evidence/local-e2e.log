@@ -1,21 +1,28 @@
-=== 增量 2 本地 E2E 证据（真实 build 产物 + node:sqlite D1 替身 + 真实迁移 SQL）2026-11-02T08:53:02Z ===
+=== 本地接口级 E2E（真实 build 产物 + 真实 HTTP + 真实 feed 夹具 + node:sqlite 跑真实迁移 SQL）2026-11-02T10:30:46Z ===
 $ npm run e2e:local
-(node:28084) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:21012) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 [e2e] shim 已监听 http://127.0.0.1:8901（真实 build 产物 + 夹具上游）
-✔ A1 单源抓取（真实 HN feed）返回条目 — status=200 items=3 287ms
+✔ A1 单源抓取（真实 HN feed）返回条目 — status=200 items=3 460ms
 ✔ A1 条目字段完整（标题去 CDATA / 真实链接 / pubDate） — {"title":"Show HN: Wikihack – HackerTube, but for Wikipe","link":"https://wikihack.netlify.app","publishedAt":"2026-11-02T05:06:30.000Z"}
 ✔ A1 摘要已去 HTML 标签（真实 feed 描述含 <p>/<a>） — After seeing Karpathy's Hackertube and Hackerbooks, I just h
-✔ A1 源健康 ok 且条目数正确 — {"sourceId":"hn","level":"ok","itemCount":3,"checkedAt":"2026-11-02T08:53:04.679Z"}
+✔ A1 源健康 ok 且条目数正确 — {"sourceId":"hn","level":"ok","itemCount":3,"checkedAt":"2026-11-02T10:30:55.244Z"}
 ✔ A2 跨源去重：3 条 HN + 2 条 Atom，去重后 4 条 — {"fetched":5,"kept":4,"deduped":1}
 ✔ A2 保留的是先出现者（HN 那条），重复的 Atom 条目被丢弃 — 同链接条目数=1
-✔ A6 全源请求整体 200（不因坏源 500） — status=200 34ms
+✔ A6 全源请求整体 200（不因坏源 500） — status=200 115ms
 ✔ A6 坏源被分类记录（network）且健康标记 broken — arxiv-cs-ai:network, simonw:network, ithome:network, sspai:network
 ✔ A6 好源仍为 ok（失败未放大） — hn:ok | hf-blog:ok | arxiv-cs-ai:broken | simonw:broken | ithome:broken | sspai:broken
 ✔ A2 落库：/api/items 能读到之前抓到的条目（不触网） — storage=ok count=4
 ✔ A2 跨请求去重：重复抓取不新增（inserted=0） — 第一次={"inserted":0,"duplicates":4} 第二次={"inserted":0,"duplicates":4}
 ✔ A2 条目总数不因重复抓取而增长 — 4 → 4
 ✔ D10 源健康快照：正常源建立 baseline，坏源不伪造 baseline — ["hn:ok/base=3","hf-blog:ok/base=2","arxiv-cs-ai:broken/base=null","simonw:broken/base=null","ithome:broken/base=null","sspai:broken/base=null"]
-✔ A5 首页 200 + SSR 出内容 — status=200 bytes=1887
+✔ 增量4 POST /api/digest 生成当日日报（400 行以内） — status=200 date=2026-11-02 入选=0
+✔ 增量4 日报含全部 6 板块（固定结构） — 长度=704
+✔ 增量4 GET /api/digest 能读回刚生成的日报 — status=200
+✔ 增量4 日报索引可列（供历史回看） — list=1
+✔ 增量5 GET /api/sources 返回各源快照 + 历史 — sources=6 storage=ok
+✔ 增量5 源快照含健康状态、基线与连续失败次数 — {"health":"ok","base":3,"fails":0,"hist":5}
+✔ A5 首页 200 + SSR 出内容 — status=200 bytes=2354
 ✔ A5 首页 HTML 引用了客户端脚本（水合入口在） — assets 引用=1
-E2E：15/15 通过
+✔ 增量5 首页含日报/精选/历史/源健康四个页签 — 命中=日报,精选,历史,源健康
+E2E：22/22 通过
