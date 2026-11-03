@@ -150,6 +150,16 @@ export type Store = {
   recordRun(records: HealthRecord[], now?: number): Promise<void>;
   /** 读持久化条目（增量 5 的 UI 与 /api/items 用） */
   recentItems(opts?: { limit?: number; sourceId?: string }): Promise<StoredItem[]>;
+  /**
+   * 读**最近 N 天已评分**的条目标题（跨批次去重用）。
+   *
+   * 为什么要它：同一事件被不同源**分批**报道（openai 上午发、hn 下午转）时，
+   * 同批次聚类抓不到 —— 两条都在待评队列里，不去重就会**评两次分**（两次真金白银的调用）。
+   * 只回看已评分的（不是全部条目）：已评分的才代表「已经花过钱了，再花一次就是浪费」。
+   */
+  listRecentScoredTitles(opts?: { days?: number; limit?: number }): Promise<
+    Array<{ contentKey: string; title: string }>
+  >;
   /** 读某源健康历史（排查「什么时候开始坏的」） */
   healthHistory(sourceId: string, limit?: number): Promise<HealthRow[]>;
   /** 写评分（同一条只留最新一次：重评分是常态） */
@@ -298,6 +308,20 @@ export function createMemoryStore(): Store & { _size(): { items: number; health:
         .filter((i) => (opts.sourceId ? i.sourceId === opts.sourceId : true))
         .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0) || b.lastSeenAt - a.lastSeenAt)
         .slice(0, limit);
+    },
+    async listRecentScoredTitles(opts = {}) {
+      const days = Math.max(1, opts.days ?? 3);
+      const limit = Math.max(1, Math.min(opts.limit ?? 800, 2000));
+      const since = Date.now() - days * 86_400_000;
+      const out: Array<{ contentKey: string; title: string }> = [];
+      for (const [key, i] of items) {
+        const st = itemState.get(key) ?? "pending";
+        if (st !== "scored") continue;
+        if (i.lastSeenAt < since) continue;
+        out.push({ contentKey: key, title: i.title });
+        if (out.length >= limit) break;
+      }
+      return out;
     },
 
     async healthHistory(sourceId, limit = 20) {
@@ -627,6 +651,17 @@ export function createD1Store(db: D1Like): Store {
         ? await stmt.bind(opts.sourceId, limit).all<ItemRow>()
         : await stmt.bind(limit).all<ItemRow>();
       return (res.results ?? []).map(rowToItem);
+    },
+
+    async listRecentScoredTitles(opts = {}) {
+      const days = Math.max(1, opts.days ?? 3);
+      const limit = Math.max(1, Math.min(opts.limit ?? 800, 2000));
+      const since = Date.now() - days * 86_400_000;
+      const sql = `SELECT content_key, title FROM items
+        WHERE score_state = 'scored' AND last_seen_at >= ?
+        ORDER BY last_seen_at DESC LIMIT ?`;
+      const res = await db.prepare(sql).bind(since, limit).all<{ content_key: string; title: string }>();
+      return (res.results ?? []).map((r) => ({ contentKey: r.content_key, title: r.title }));
     },
 
     async saveScores(rows, now = Date.now()) {

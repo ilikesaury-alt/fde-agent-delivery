@@ -69,36 +69,38 @@ check("② 标题正确", title.includes("AI 资讯雷达"), title);
 /* ── ③ 水合成功（React 接管后按钮才可点）── */
 await page.waitForLoadState("networkidle", { timeout: TIMEOUT }).catch(() => undefined);
 
-// 点「刷新」后按钮文案会变成「抓取中…」再变回来 —— 说明 React 状态更新生效（= 已水合）
+// 点「刷新」后按钮文案会变成「刷新中（抓取+评分+日报）…」再变回来 —— 说明 React 状态更新生效（= 已水合）
 const refreshBtn = page.locator("button", { hasText: "刷新" }).first();
 const hasRefresh = (await refreshBtn.count()) > 0;
 check("③ 刷新按钮存在", hasRefresh);
 
 if (hasRefresh) {
   const before = (await refreshBtn.textContent()) ?? "";
-  // 抓取统计（页头「上次抓取 …」行）：每次抓取后时间/耗时必变，作为「抓取真的发生了」的凭据
+  // 抓取统计（页头「上次刷新 …」行）：每次刷新后时间/计数必变，作为「刷新真的跑过了」的凭据
   const statsBefore =
-    (await page.locator("body").innerText()).match(/上次抓取[^\n]*/)?.[0] ?? "";
+    (await page.locator("body").innerText()).match(/上次刷新[^\n]*/)?.[0] ?? "";
   await refreshBtn.click({ timeout: TIMEOUT });
-  // 本地 shim 抓取毫秒级完成，「抓取中…」可能一闪而过轮询不到 —— 属预期，不算失败；
-  // 此时以抓取统计是否变化判定水合（页签切换断言 ⑥–⑩ 是水合的第二重证据）
+  // ⚠️ 2026-11-03：刷新 = **手动跑完整流程**（抓取 → 去重 → 评分 → 日报），
+  // 线上实测约 20 秒（抓取 ~6s + 评分 ~14s）。所以 loading 文案用「刷新中」而不是「抓取中」，
+  // 且「抓取中…」在一闪之间不一定轮询得到 —— 以页头统计是否变化判定水合
+  // （页签切换断言 ⑥–⑩ 是水合的第二重证据）。
   let sawFetching = false;
   await page
-    .waitForFunction(() => document.body.innerText.includes("抓取中…"), { timeout: 3000 })
+    .waitForFunction(() => document.body.innerText.includes("刷新中"), { timeout: 5000 })
     .then(() => {
       sawFetching = true;
     })
     .catch(() => undefined);
   await page
-    .waitForFunction(() => !document.body.innerText.includes("抓取中…"), { timeout: TIMEOUT })
+    .waitForFunction(() => !document.body.innerText.includes("刷新中"), { timeout: TIMEOUT })
     .catch(() => undefined);
   const statsAfter =
-    (await page.locator("body").innerText()).match(/上次抓取[^\n]*/)?.[0] ?? "";
+    (await page.locator("body").innerText()).match(/上次刷新[^\n]*/)?.[0] ?? "";
   const reacted = sawFetching || statsAfter !== statsBefore;
   check(
     "④ 点击「刷新」触发 React 状态更新（= 客户端已水合）",
     reacted,
-    `按钮：${before.trim()} · 抓取中=${sawFetching} · 统计「${statsBefore}」→「${statsAfter}」`,
+    `按钮：${before.trim()} · 刷新中=${sawFetching} · 统计「${statsBefore}」→「${statsAfter}」`,
   );
 }
 

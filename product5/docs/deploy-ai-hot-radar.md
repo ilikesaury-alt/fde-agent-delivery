@@ -134,19 +134,62 @@ typecheck 0 error · 单测 107/107 · build 成功 · 本地 E2E 27/27 · 文�
 
 **验证**：typecheck 0 · 单测 107/107（含审查回归 19 项）· 本地 E2E 27/27（含四页签 SSR 断言 + 源健康历史接口）。
 
+## 0.9 增量 8（取消定时任务 + L1/L2 去重）· 2026-11-03
+
+| 项 | 值 |
+|---|---|
+| 线上版本 | `14704c76-9ac7-4cf7-8088-df031a1f9366` |
+| 定时任务 | **全部取消**（原 3 个 Cron 已删；线上触发器已清零） |
+| 新接口 | `POST /api/refresh` —— 一次跑完「抓取 → 去重 → 评分 → 生成日报」 |
+| 新模块 | `lib/dedup.ts`（L1 标题 Jaccard + L2 SimHash 指纹 + 数字签名硬闸） |
+| 单测 | **155/155**（新增 `test/dedup.test.ts` + `test/refresh.test.ts`） |
+| 本地 E2E | 31/31 |
+| 实测 | 线上刷新一次 **20.4 秒**：抓取 195 条 → 评分 7 条 → 日报入选 12 条 → 队列清空 |
+
+**为什么取消全部定时任务**（D15，用户拍板）：
+1. 定时抓取**只堆不消** —— 实测每轮抓 195 条，评分 cron 每小时只消化一批 → 队列长期积压（实测 pending 558）。
+2. **评分是花钱的** —— 定时跑意味着每天固定烧掉一批 LLM 额度，而用户可能根本没看。
+3. 用户要的是「点一下就看到新内容」，不是「等 cron 慢慢磨」。
+
+**新接口的预算**（Workers Free 外部 subrequest 50/次）：抓取 14 源 = 14 次，
+评分上限 30 条（每条 1 次 LLM 调用）→ 留余量给重试。超出的留队列，用户再点一次继续。
+
+**去重的位置很关键**：`lib/queue.ts` 的**预筛之后、送 LLM 之前** ——
+命中重复的条目标 `dropped`（记原因），一次 LLM 调用都不花。
+
+**⚠️ 运维坑（已踩，务必记住）**：
+`wrangler deploy` 与 `wrangler triggers deploy` **只增不删** cron 触发器。
+删掉 `crons/` 目录重新部署后，线上仍残留 3 个旧触发器（实测 `GET .../schedules` 仍返回 3 条）
+—— 意味着「取消定时任务」根本没生效。**必须用 Cloudflare 的替换语义端点清零**：
+```
+PUT /accounts/{account_id}/workers/scripts/{name}/schedules   body: []   （替换语义）
+```
+（`DELETE .../schedules/{cron}` 对 wrangler 的 OAuth 凭据返回 10405，不可用。）
+已写进 `scripts/deploy.mjs`（部署后自动同步）。
+
+**⚠️ 另一个坑**：`wrangler deploy --secrets-file` 会用**文件内容覆盖全部 secrets**。
+本轮实测 `.secrets.json` 里的 `MAGPIE_BASE_URL` 还是**旧隧道域名**，直接部署会把它写回线上
+→ 五个产品的 LLM 链路同时挂（正是当天早上那次故障的根因）。
+**换隧道域名后必须同步更新各产品的 `.secrets.json`**（本轮已更新 5 个）。
+
 ## 0.7 增量 4（Cron + 日报 + 多样性配额）· 2026-11-02
+
+> ⚠️ **已被增量 8 取代**：本节的三个 Cron（`5 * * * *` 抓取 / `20 * * * *` 评分 / `30 0 * * *` 日报）
+> 已于 2026-11-03 **全部删除**，改为 `POST /api/refresh` 手动触发。保留本节作为决策轨迹。
 
 | 项 | 值 |
 |---|---|
 | 迁移 | `db/migrations/0003_daily.sql`（daily 表 + 索引） |
-| Cron | `5 * * * *` 抓取 · `20 * * * *` 评分（10 条/次）· `30 0 * * *` 日报（UTC） |
-| 打包验证 | `dist/ssr/wrangler.json` 的 `triggers.crons` 已含三条（Void 从 `crons/` 自动注册） |
+| Cron | ~~`5 * * * *` 抓取 · `20 * * * *` 评分（10 条/次）· `30 0 * * *` 日报（UTC）~~ **已删除** |
+| 打包验证 | ~~`dist/ssr/wrangler.json` 的 `triggers.crons` 已含三条~~ → 现为 `triggers` 缺省（无任何定时任务） |
 
-**为什么拆三个 Cron**：Free 套餐**每次 Cron 的 CPU 只有 10ms**、subrequest 上限 50/次。
+**为什么拆三个 Cron**（当时的口径）：Free 套餐**每次 Cron 的 CPU 只有 10ms**、subrequest 上限 50/次。
 「抓取+评分+日报」塞一次必然超预算；拆开后每步预算可控，且任一步失败不牵连其它步骤。
+→ 增量 8 改为「一次手动请求跑完」，靠**外部 subrequest 预算**（14 抓取 + ≤30 评分 ≤ 50）控制，
+不依赖 Cron 的 CPU 预算。
 
-**架构去重**：抽 `lib/ingest.ts`（抓取链路，`/api/feed` 与 cron 共用）与
-`lib/daily.ts`（日报生成，cron 与 `POST /api/digest` 共用）——
+**架构去重**：抽 `lib/ingest.ts`（抓取链路，`/api/feed` 与 `/api/refresh` 共用）与
+`lib/daily.ts`（日报生成，`/api/refresh` 与 `POST /api/digest` 共用）——
 手动刷新与定时任务走同一实现，避免行为分叉。
 
 **可验证性**：`POST /api/digest` 可立即重生成当日日报（令牌保护），验收不必等到次日。

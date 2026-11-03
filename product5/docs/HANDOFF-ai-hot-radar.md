@@ -2,17 +2,15 @@
 
 > 面向**下一个开发者会话**：现状、坑、下一步。读完应能直接接着干，不用翻聊天记录。
 > 最后更新：2026-11-03（UI 令牌层重设计已上线）
+> **Status：`ready-for-review`** —— 实现完成、证据齐、已上线；**交叉对抗审查已完成**（8 条阻塞全修）、**手动完整流程线上实测通过**、线上 ACCESS_TOKEN 已配置；剩余的是「评测标签人工复核」等人做决策的事，故不用 `complete`。
 >
-> **Status：`ready-for-review`** —— 实现完成、证据齐、已上线；**交叉对抗审查已完成**（8 条阻塞全修）、
-> **Cron 真实触发已观测**、线上 ACCESS_TOKEN 已配置；剩余的是「评测标签人工复核」等人做决策的事，
-> 故不用 `complete`。
 
 ## 1. 当前状态（一句话）
 
-**已上线并通过真环境验证**：version `ebf7e21d`（部署 `2026-11-03T08:34Z`，**含源扩充 6→14 + 健康口径修正 + 评分提速**），线上 **14 源全部可抓（195 条/轮）**、真实评分零失败、
-日报自动生成并落库、四页签 UI 可用；阈值经评测集实测标定为 70（Precision 100% / Recall 77.3%）。
-**三个 Cron 均已观测到真实触发**（抓取每小时 :06 一次、连续 16h+ 无间断；评分每批消化队列 8 条；
-日报 00:30 UTC 自动生成）。
+**最新上线通过「手动完整流程」验证**（version `14704c76`，部署 `2026-11-03T10:40Z`）：**取消全部定时任务改手动触发 + L1/L2 标题去重**。线上实测：点一次刷新 **20.4 秒**跑完「抓取 195 条 → 去重 → 评分 7 条 → 日报入选 12 条 → 队列清空」，**14 源全可抓、0 失败源**。
+日报**随刷新即时生成**并落库（不再是 00:30 定时生成）、四页签 UI 可用；阈值经评测集实测标定为 70（Precision 100% / Recall 77.3%）。
+**手动完整流程线上实测通过**（`POST /api/refresh`）：抓取 ~6 秒 + 评分 ~14 秒 = 总 20.4 秒；队列 pending 5 → 0。
+**线上定时触发器已清零**（`GET .../schedules` 返回空）—— 抓取/评分/日报**全部由用户点击触发**。
 
 需求口径与全部决策在 [CONTEXT.md](../CONTEXT.md)（只增不改）。交付/原理/部署文档：
 [交付文档](./features/ai-hot-radar/ai-hot-radar-交付文档.md) ·
@@ -35,17 +33,15 @@ product5/
 ├── lib/
 │   ├── rss.ts      ★            零依赖 RSS/Atom 解析 + 抓取 + 去重 + 源健康（healthOf：截断≠异常）
 │   ├── score.ts    ★            两阶段评分：本地预筛 + 四维打分 + 阈值/topN（纯函数）
+│   ├── dedup.ts    ★新增        L1 标题 Jaccard + L2 SimHash 指纹 + 数字签名硬闸（省 LLM 调用）
 │   ├── digest.ts   ★            日报 6 板块 + selectWithQuota 单源配额（纯函数）
 │   ├── daily.ts                 日报生成编排（cron 与 POST 共用）
 │   ├── ingest.ts                抓取编排（/api/feed 与 cron 共用）
 │   ├── llm.ts                   magpie 适配（严格 JSON 校验、失败分类、单条失败不写库）
 │   ├── store.ts                 D1 实现（批量写入走 db.batch）+ 内存实现（同接口）
 │   ├── types.ts  sources.ts  http.ts  auth.ts
-├── crons/
-│   ├── fetch.ts                 每小时 :05 抓取
-│   ├── score.ts                 每小时 :20 评分一批
-│   └── digest.ts                每天 00:30 UTC 生成日报
-├── routes/api/{health,feed,items,top,score,digest,sources}.ts
+├── routes/api/{health,feed,items,top,score,digest,sources,refresh}.ts
+│   └── refresh.ts ★新增        手动触发完整流程：抓取 → 去重 → 评分 → 日报
 ├── pages/{index.tsx,index.server.ts,layout.tsx}   layout 必须返回 fragment；index.tsx 含自研 Markdown 渲染
 ├── styles.css                     设计令牌层（与①–④同构：表面/描边/文字/品牌/语义色 + 亮暗两套）
 ├── test/*.ts                      116 项单测（node --experimental-strip-types；含审查回归 19 项 + 源健康/队列排序/候选窗口回归）
@@ -117,7 +113,10 @@ product5/
 - 跨请求去重生效：连打两次 `/api/feed` → 180 新增 → 180 判重
 - 真实评分 60 条零失败（magpie `auto/minimax-m3.1-flash`，prompt `score-v1`）
 - 阈值标定：70 → Precision 100% / Recall 77.3% / F1 0.872（50 条标签 × 60 条真实评分）
-- Cron 已注册（`dist/ssr/wrangler.json` 的 `triggers.crons` 三条）
+- **无任何定时任务**（2026-11-03 增量 8：原 3 个 Cron 全部删除，线上触发器已清零）
+  - ⚠️ `wrangler deploy` / `wrangler triggers deploy` **只增不删** cron —— 必须用
+    `PUT /accounts/{id}/workers/scripts/{name}/schedules`（body `[]`）清零；已写进 `scripts/deploy.mjs`
+  - ⚠️ `wrangler deploy --secrets-file` 会用文件覆盖全部 secrets —— **换隧道域名后必须同步各产品 `.secrets.json`**
 - 单源配额生效：27 条过阈值 → 入选 9 条、让位 18 条；不设配额时 top5 全为 arxiv
 - 本地 E2E 31/31、单测 116/116、typecheck 0 error、文档 0 断链
 

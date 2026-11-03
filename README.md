@@ -11,9 +11,9 @@
 | ② | **内容工作台**（content-studio） | https://content-studio.ilikesaury.workers.dev | 贴文章链接或粘贴素材 → 流式生成小红书图文笔记 + 历史/重新生成 |
 | ③ | **知识库问答**（kb-ask） | https://kb-ask.ilikesaury.workers.dev | 导入私有文档 → 带引用的问答；依据不足明确拒答 |
 | ④ | **体检指标追踪**（health-track） | https://health-track.ilikesaury.workers.dev | 体检报告 → 结构化指标 → 趋势与异常 → 有依据、不越界的解读 |
-| ⑤ | **AI 资讯雷达**（ai-hot-radar） | https://ai-hot-radar.ilikesaury.workers.dev | 定时聚合多源 RSS → 评分精选 → 每日自动日报 |
+| ⑤ | **AI 资讯雷达**（ai-hot-radar） | https://ai-hot-radar.ilikesaury.workers.dev | 一键聚合多源 RSS → 去重 → 评分精选 → 日报（手动触发完整流程） |
 
-**五个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**、⑤ **14 源全可抓（195 条/轮 · 0 失败源）**+ 真实评分 **60 条零失败** + 阈值由评测集实测标定（**Precision 100% / Recall 77.3%**）+ 日报自动生成 + 单源配额防垄断（27 条过阈值 → 入选 9 条、让位 18 条）。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`、`product5/docs/deploy-ai-hot-radar.md`。
+**五个产品均已上线且线上验证通过**：① 8/8 验收、② T1–T16 全过、③ 线上接口 E2E **35/35** + 线上评测 **21 例**（真 bge-m3 嵌入 + 真 Vectorize 检索 + 真 magpie 生成 + 引用可核验）、④ 线上接口 E2E **39/39** + **真实语料字段级标定 32 行**（行/名称/结果/参考范围/状态 32/32，单位 28/32） + **真实语料 5 份全部正确处置**（4 份检验报告扫描件：重建 24/6/1/1 行 = 真实项目数；第 5 份是超声散文报告，被明确拦下）+ **真实扫描件链路 11/11**（真实体检报告 PDF → 浏览器本地 PaddleOCR → 表格重建 6/6 → 抽取 → 确认闸）+ UI 走查 **33/33** + 真网关抽取评测 **6 次重复中 5 次行级 100%、1 次 96.4%（偶发漏行）· 红线 10/10**、⑤ **14 源全可抓（195 条/轮 · 0 失败源）**+ 真实评分 **703 条零失败** + **手动一键跑完整流程（实测 20.4 秒：抓取→去重→评分→日报）** + **L1/L2 标题去重（阈值由真实数据标定）** + 阈值由评测集实测标定（**Precision 100% / Recall 77.3%**）+ 日报自动生成 + 单源配额防垄断（27 条过阈值 → 入选 9 条、让位 18 条）。证据见各自 `productN/docs/e2e-evidence/`、`product3/docs/deploy-kb-ask.md`、`product4/docs/deploy-health-track.md`、`product5/docs/deploy-ai-hot-radar.md`。
 
 > **线上地址 / 版本 / 资源 ID / 凭据位置**：统一登记在 [线上环境速查](./docs/线上环境速查.md)（唯一真源，其它文档不重复硬编码）。
 

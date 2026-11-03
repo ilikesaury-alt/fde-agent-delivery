@@ -143,6 +143,47 @@ type ItemsResponse = {
 
 type Tab = "digest" | "top" | "history" | "sources";
 
+/**
+ * POST /api/refresh 的响应（2026-11-03：取消全部定时任务后，
+ * 刷新按钮改为**手动触发完整流程**：抓取 → 去重 → 评分 → 生成日报）。
+ */
+type RefreshResponse = {
+  ok: boolean;
+  elapsedMs: number;
+  feed: {
+    fetched: number;
+    kept: number;
+    deduped: number;
+    inserted: number;
+    duplicates: number;
+    failures: number;
+    elapsedMs: number;
+  };
+  score: {
+    scored: number;
+    dropped: number;
+    duplicated: number;
+    failed: number;
+    dead: number;
+    pending: boolean;
+  } | null;
+  digest: {
+    date: string;
+    counts: {
+      fetched: number;
+      kept: number;
+      deduped: number;
+      scored: number;
+      aboveThreshold: number;
+      selected: number;
+      skippedQuota: number;
+    };
+    markdown: string;
+  } | null;
+  queue: Record<string, number>;
+  warnings: string[];
+};
+
 /* ────────────────────── 工具 ────────────────────── */
 
 function fmtTime(iso: string | null): string {
@@ -330,7 +371,10 @@ function renderMarkdown(md: string): React.ReactNode {
 export default function IndexPage() {
   const [token, setToken] = useState("");
   const [tab, setTab] = useState<Tab>("digest");
-  const [feed, setFeed] = useState<FeedResponse | null>(null);
+  /** 最近一次刷新的完整结果（2026-11-03：刷新 = 手动跑完整流程） */
+  const [lastRefresh, setLastRefresh] = useState<RefreshResponse | null>(null);
+  /** 最近一次刷新的完成时刻（毫秒） */
+  const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [top, setTop] = useState<TopResponse | null>(null);
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [digestList, setDigestList] = useState<NonNullable<DigestResponse["list"]>>([]);
@@ -339,6 +383,8 @@ export default function IndexPage() {
   const [sources, setSources] = useState<SourcesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 上次刷新的结果摘要（成功时显示在控制条下方） */
+  const [notice, setNotice] = useState<string | null>(null);
   /** 任一读接口返回 401 → 提示输入令牌（而不是把错误体当数据渲染到崩溃） */
   const [needToken, setNeedToken] = useState(false);
   const needTokenRef = useRef(false);
@@ -376,22 +422,15 @@ export default function IndexPage() {
     [authHeaders],
   );
 
-  const loadFeed = useCallback(
-    async (tk: string) => {
-      setLoading(true);
-      setError(null);
-      const body = await fetchJson<FeedResponse>(tk, "/api/feed");
-      if (!body) {
-        // 401 时 fetchJson 已把 needToken 置位，这里不叠加网络错误文案
-        if (!needTokenRef.current) setError("抓取失败（网络异常或服务暂不可用），请稍后重试。");
-        setFeed(null);
-      } else {
-        setFeed(body);
-      }
-      setLoading(false);
-    },
-    [fetchJson],
-  );
+  /**
+   * ⚠️ 2026-11-03：页面**初始加载不再自动抓取**，刷新按钮改为手动跑完整流程。
+   *
+   * 原来初始加载会调 `GET /api/feed`，而那个接口本身就去抓源站 ——
+   * 等于「每次打开页面都自动抓 14 个源」。在取消全部定时任务的新设计下，
+   * 这是违背意图的（用户明确要求：手动点击才触发完整流程）。
+   * `GET /api/feed` 本身保留：它仍是「源站可达性探针」，
+   * 部署脚本与 E2E 靠它验证出网与源健康。
+   */
 
   const loadReadonly = useCallback(
     async (tk: string) => {
@@ -437,16 +476,92 @@ export default function IndexPage() {
         /* 健康探测失败不影响页面 */
       }
     })();
-    void loadFeed(tk);
+    // ⚠️ 2026-11-03：**不再在初始加载时抓取**。
+    // 原来这里会调 `GET /api/feed`，而那个接口本身就去抓源站 ——
+    // 等于「每次打开页面都自动抓 14 个源」。取消定时任务后，改为
+    // 「用户点刷新才抓取+评分+生成日报」，页面加载只读库。
     void loadReadonly(tk);
     void loadDigestList(tk);
-  }, [loadFeed, loadReadonly, loadDigestList]);
+  }, [loadReadonly, loadDigestList]);
 
-  const refreshAll = () => {
-    void loadFeed(token);
+  /**
+   * 刷新：跑**完整流程**（2026-11-03 起产品⑤ 取消了全部定时任务）。
+   *
+   * 流程：抓取 14 源 → L1/L2 去重 → 评分（预算 30 条）→ 生成日报。
+   * 一次请求约 20–40 秒（抓取 ~10s + 评分 ~20s），所以按钮全程 loading。
+   *
+   * 失败分三档处理（与后端 /api/refresh 的降级策略对应）：
+   *   401          → 提示输令牌
+   *   网络/5xx     → 提示稍后重试（已抓到的数据仍在库里，不会丢）
+   *   200 + warnings → 正常刷新，但把警告显示出来（如“评分失败 N 条”）
+   */
+  const refreshAll = useCallback(async () => {
+    if (!token) {
+      setNeedToken(true);
+      needTokenRef.current = true;
+      setError("请先输入访问令牌再刷新。");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/refresh", {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      if (res.status === 401) {
+        needTokenRef.current = true;
+        setNeedToken(true);
+        setError("访问令牌无效或缺失，请重新输入。");
+        return;
+      }
+      if (!res.ok) {
+        setError(`刷新失败（HTTP ${res.status}），请稍后重试。已抓到的数据仍在库里，不会丢。`);
+        return;
+      }
+      const body = (await res.json()) as RefreshResponse;
+      setLastRefresh(body);
+      setRefreshedAt(Date.now());
+
+      // 把后端返回的新日报直接挂上，省掉一次请求
+      if (body.digest) {
+        setDigest({ storage: "ok", digest: body.digest as unknown as DigestRecord });
+        setDigestDate(body.digest.date);
+      }
+
+      const s = body.score;
+      const bits = [
+        `抓取 ${body.feed.fetched} 条`,
+        `新增 ${body.feed.inserted} 条`,
+      ];
+      if (s) {
+        bits.push(`评分 ${s.scored} 条`);
+        if (s.duplicated > 0) bits.push(`去重跳过 ${s.duplicated} 条`);
+        if (s.dropped > 0) bits.push(`预筛丢弃 ${s.dropped} 条`);
+        if (s.failed > 0) bits.push(`失败 ${s.failed} 条`);
+      }
+      if (body.digest) {
+        bits.push(`日报入选 ${body.digest.counts.selected} 条`);
+      }
+      bits.push(`耗时 ${(body.elapsedMs / 1000).toFixed(1)}s`);
+      if (body.warnings.length > 0) {
+        setError(body.warnings.join(" "));
+      }
+      if (s?.pending) {
+        bits.push("队列仍有待评条目，可再点一次刷新继续消化");
+      }
+      setNotice(bits.join(" · "));
+    } catch {
+      setError("刷新失败（网络异常或服务暂不可用），请稍后重试。");
+    } finally {
+      setLoading(false);
+    }
+
+    // 刷新各页签的只读数据（日报已在上面直接更新）
     void loadReadonly(token);
     void loadDigestList(token);
-  };
+  }, [authHeaders, loadReadonly, loadDigestList, token]);
 
   const openDigest = async (date: string) => {
     const res = await fetchJson<DigestResponse>(token, `/api/digest?date=${date}`);
@@ -507,15 +622,16 @@ export default function IndexPage() {
           </p>
         </div>
         <div className="text-[12px] leading-5 text-[var(--color-ink-3)]">
-          {feed ? (
+          {lastRefresh && refreshedAt ? (
             <>
-              <div>上次抓取 {fmtTime(feed.fetchedAt)}</div>
+              <div>上次刷新 {new Date(refreshedAt).toLocaleString("zh-CN", { hour12: false })}</div>
               <div>
-                {feed.counts.fetched} 条 / 去重后 {feed.counts.kept} · {feed.elapsedMs}ms
+                抓取 {lastRefresh.feed.fetched} 条 · 新增 {lastRefresh.feed.inserted} ·{" "}
+                {lastRefresh.score ? `评分 ${lastRefresh.score.scored}` : "未评分"}
               </div>
             </>
           ) : (
-            <div>尚未抓取</div>
+            <div>尚未刷新（点「刷新」跑完整流程）</div>
           )}
         </div>
       </header>
@@ -540,13 +656,20 @@ export default function IndexPage() {
         />
         <button
           type="button"
-          onClick={refreshAll}
+          onClick={() => void refreshAll()}
           disabled={loading}
+          title="抓取 14 个源 → 去重 → 评分 → 生成日报（约 20–40 秒）"
           className="rounded-md bg-[var(--color-brand)] px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-[var(--color-brand-hover)] disabled:opacity-50"
         >
-          {loading ? "抓取中…" : "刷新"}
+          {loading ? "刷新中（抓取+评分+日报）…" : "刷新"}
         </button>
       </section>
+
+      {notice && (
+        <p className="mb-4 rounded-md border border-[var(--color-brand-line)] bg-[var(--color-brand-soft)] px-3 py-2 text-[13px] text-[var(--color-brand)]">
+          {notice}
+        </p>
+      )}
 
       {error && (
         <p className="mb-4 rounded-md border border-[var(--color-err-line)] bg-[var(--color-err-soft)] px-3 py-2 text-[13px] text-[var(--color-err)]">

@@ -14,6 +14,13 @@
 
 import { scoreMany } from "./llm.ts";
 import { prefilterAll, type ScoreInput } from "./score.ts";
+import {
+  clusterBySimilarity,
+  DEFAULT_HISTORY_DAYS,
+  DEFAULT_HISTORY_LIMIT,
+  findCrossBatchDuplicate,
+  fingerprintOf,
+} from "./dedup.ts";
 import type { ScoreRow, Store, StoredItem } from "./store.ts";
 
 /** 单条条目最多尝试几次 LLM（超过则标 dead，不再重试） */
@@ -32,6 +39,8 @@ export type ScoreBatchOptions = {
 export type ScoreBatchResult = {
   /** 本地预筛直接丢弃（未花 LLM 调用） */
   dropped: number;
+  /** 被判定为重复而跳过（未花 LLM 调用） */
+  duplicated: number;
   /** 真实评分成功 */
   scored: number;
   /** 送 LLM 但失败（回到队列，累计尝试次数） */
@@ -49,6 +58,8 @@ export type ScoreBatchResult = {
     error?: string;
     message?: string;
     prefilter?: string;
+    /** 重复判定说明（与哪条重复、依据是什么） */
+    duplicateOf?: string;
   }>;
 };
 
@@ -61,7 +72,15 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   // 认领一批（已按 attempts 升序 + 租约过滤）
   const claimed: StoredItem[] = await opts.store.claimForScoring(limit);
   if (claimed.length === 0) {
-    return { dropped: 0, scored: 0, failed: 0, dead: 0, pending: false, details: [] };
+    return {
+      dropped: 0,
+      duplicated: 0,
+      scored: 0,
+      failed: 0,
+      dead: 0,
+      pending: false,
+      details: [],
+    };
   }
 
   const details: ScoreBatchResult["details"] = [];
@@ -100,7 +119,113 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
 
   if (candidates.length === 0) {
     const pending = (await opts.store.queueStats()).pending > 0;
-    return { dropped: droppedKeys.length, scored: 0, failed: 0, dead: 0, pending, details };
+    return {
+      dropped: droppedKeys.length,
+      duplicated: 0,
+      scored: 0,
+      failed: 0,
+      dead: 0,
+      pending,
+      details,
+    };
+  }
+
+  /* ── 阶段 1.5：去重（2026-11-03 新增）──
+   *
+   * 为什么要这一步：同一个事件被多个源报道时，逐条评分是**纯浪费**
+   * —— 每次调用都真花钱、都要等秒级响应，而结果必然是同一个事件的多个分数。
+   * 实测（14 源真实数据）：一个批次里就有跨源重复（如 openai 与 hn 同时发
+   * 「Scaling Git at OpenAI」），跨批次更多（openai 上午发、hn 下午转）。
+   *
+   * 两层判据（详见 lib/dedup.ts）：
+   *   L1 同批次：归一化标题 + token Jaccard ≥ 0.55
+   *   L1 跨批次：与最近 N 天**已评分**条目比（Jaccard ≥ 0.55）
+   *   两层都带「数字签名」硬闸（版本号不同 → 绝不合并）
+   *
+   * 位置很关键：在**预筛之后、送 LLM 之前** —— 命中重复的条目一次调用都不花。
+   */
+  const dupMarks: Array<{ contentKey: string; state: "dropped"; error: string }> = [];
+  const duplicateKeys = new Set<string>();
+
+  // L1-a：同批次聚类（簇内只留代表）
+  const clusterRes = clusterBySimilarity(
+    candidates.map((c) => ({ contentKey: c.item.contentKey, title: c.item.title })),
+  );
+  // 代表 → 簇的映射（merged 下标 → 代表下标）
+  const repOf = new Map<number, number>();
+  for (const cluster of clusterRes.clusters) {
+    for (const m of cluster.members) repOf.set(m, cluster.representative);
+  }
+  for (const mergedIdx of clusterRes.merged) {
+    const c = candidates[mergedIdx]!;
+    const repIdx = repOf.get(mergedIdx) ?? mergedIdx;
+    const rep = candidates[repIdx]!;
+    const cluster = clusterRes.clusters.find((cl) => cl.representative === repIdx);
+    duplicateKeys.add(c.item.contentKey);
+    dupMarks.push({
+      contentKey: c.item.contentKey,
+      state: "dropped",
+      error: `与《${rep.item.title.slice(0, 60)}》重复（${cluster?.reason ?? "同一事件"}）`,
+    });
+    details.push({
+      contentKey: c.item.contentKey,
+      title: c.item.title,
+      ok: false,
+      duplicateOf: rep.item.title.slice(0, 120),
+    });
+  }
+
+  // L1-b：跨批次（与最近已评分条目比）
+  let history: Array<{ contentKey: string; title: string }> = [];
+  try {
+    history = await opts.store.listRecentScoredTitles({
+      days: DEFAULT_HISTORY_DAYS,
+      limit: DEFAULT_HISTORY_LIMIT,
+    });
+  } catch {
+    // 历史读不到 → 跳过跨批次去重（宁可多评一次，也不因存储问题丢条目）
+    history = [];
+  }
+  if (history.length > 0) {
+    candidates.forEach((c, idx) => {
+      if (duplicateKeys.has(c.item.contentKey)) return;
+      const hit = findCrossBatchDuplicate(fingerprintOf(c.item.title), history);
+      if (!hit) return;
+      duplicateKeys.add(c.item.contentKey);
+      dupMarks.push({
+        contentKey: c.item.contentKey,
+        state: "dropped",
+        error: `${hit.reason}：《${hit.title.slice(0, 60)}》`,
+      });
+      details.push({
+        contentKey: c.item.contentKey,
+        title: c.item.title,
+        ok: false,
+        duplicateOf: hit.title.slice(0, 120),
+      });
+    });
+  }
+
+  const toScore = candidates.filter((c) => !duplicateKeys.has(c.item.contentKey));
+  const duplicated = duplicateKeys.size;
+
+  if (dupMarks.length > 0) {
+    await opts.store.markScored(
+      dupMarks.map((m) => ({ contentKey: m.contentKey, state: m.state, error: m.error })),
+    );
+  }
+
+  if (toScore.length === 0) {
+    const pending = (await opts.store.queueStats()).pending > 0;
+    return {
+      dropped: droppedKeys.length,
+      duplicated,
+      scored: 0,
+      failed: 0,
+      dead: 0,
+      pending,
+      details,
+    };
   }
 
   /* ── 阶段 2：LLM 打分（只对通过预筛的条目）── */
@@ -108,7 +233,7 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   // 并发 2 让 30 条的批要跑 15 轮；5 并发只需 6 轮，直接决定队列消化速度。
   const results = await scoreMany(
     opts.env,
-    candidates.map((c) => c.input),
+    toScore.map((c) => c.input),
     { fetchImpl: opts.fetchImpl, concurrency: 5 },
   );
 
@@ -117,7 +242,7 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   const deadKeys: string[] = [];
 
   results.forEach((r, idx) => {
-    const { item } = candidates[idx]!;
+    const { item } = toScore[idx]!;
     if (r.result.ok) {
       scoreRows.push({
         contentKey: item.contentKey,
@@ -167,6 +292,7 @@ export async function claimAndScore(opts: ScoreBatchOptions): Promise<ScoreBatch
   const stats = await opts.store.queueStats();
   return {
     dropped: droppedKeys.length,
+    duplicated,
     scored: scoreRows.length,
     failed: retryKeys.length,
     dead: deadKeys.length,

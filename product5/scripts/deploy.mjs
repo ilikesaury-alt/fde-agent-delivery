@@ -67,6 +67,57 @@ const secretsFile = resolve(
 
 const isWin = process.platform === "win32";
 
+/**
+ * 同步线上 cron 触发器（**替换语义**）。
+ *
+ * ⚠️ 为什么必须单独做（2026-11-03 踩过的坑）：
+ *   `wrangler deploy` 与 `wrangler triggers deploy` **只增不删** ——
+ *   两者都不会移除本项目已经不再声明的 cron。实测：删掉 crons/ 目录后重新部署，
+ *   线上仍残留 3 个旧触发器（5 * * * * / 20 * * * * / 30 0 * * *），
+ *   意味着「取消定时任务」根本没生效，定时抓取还在跑。
+ *   Cloudflare 的 `PUT /workers/scripts/{name}/schedules` 才是**替换**语义：
+ *   传本地声明的列表（这里为空数组）→ 线上被清空。
+ *   （`DELETE .../schedules/{cron}` 对 OAuth 凭据返回 10405，不可用。）
+ *
+ * 失败不阻断部署：cron 残留只是「多跑几次定时任务」，不是致命问题。
+ */
+async function clearRemoteCrons() {
+  const cfgPath = resolve(DIST_SSR, "wrangler.json");
+  const tomlPath = isWin
+    ? resolve(process.env.APPDATA ?? "", "xdg.config/.wrangler/config/default.toml")
+    : resolve(process.env.HOME ?? "", ".wrangler/config/default.toml");
+  try {
+    if (!existsSync(cfgPath) || !existsSync(tomlPath)) {
+      console.log("  · 跳过了 cron 同步（找不到 wrangler.json 或 wrangler 凭据）");
+      return;
+    }
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+    const accountId = cfg.account_id;
+    const token = readFileSync(tomlPath, "utf8").match(/oauth_token\s*=\s*"([^"]+)"/)?.[1];
+    if (!accountId || !token) {
+      console.log("  · 跳过了 cron 同步（缺 account_id 或 OAuth token）");
+      return;
+    }
+    const local = Array.isArray(cfg.triggers?.crons) ? cfg.triggers.crons : [];
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${WORKER_NAME}/schedules`;
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(local.map((cron) => ({ cron }))),
+    });
+    const body = await res.json().catch(() => null);
+    if (body?.success) {
+      console.log(
+        `  ✔ cron 触发器已同步（线上 ${local.length} 个：${local.join(", ") || "无"}）`,
+      );
+    } else {
+      console.log(`  · cron 同步未成功：${JSON.stringify(body?.errors ?? res.status)}`);
+    }
+  } catch (err) {
+    console.log(`  · cron 同步跳过：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 function run(cmd, args, cwd = PROJECT_ROOT) {
   const printable = [cmd, ...args].join(" ");
   console.log(`\n$ ${printable}   (cwd: ${cwd})`);
@@ -233,6 +284,7 @@ if (skipDeploy) {
   console.log("\n· 跳过部署（--skip-deploy / --probe-only）");
 } else {
   run(npx, ["wrangler", "deploy", "--name", WORKER_NAME, "--secrets-file", secretsFile], DIST_SSR);
+  await clearRemoteCrons();
 }
 
 if (skipSmoke) {
